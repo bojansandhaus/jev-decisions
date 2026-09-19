@@ -37,6 +37,9 @@ def ingest_event(source: str, event_type: str, payload: dict[str, Any]) -> dict[
     tool_name = payload.get("tool_name")
     if event_type == "tool_call" and tool_name:
         _ACTIVE_CASES[str(tool_name)] = case_id
+        invocation_id = payload.get("invocation_id")
+        if invocation_id:
+            _ACTIVE_INVOCATIONS[str(invocation_id)] = case_id
     return {"case_id": case_id, "domain": domain, "source": source, "event_type": event_type}
 
 
