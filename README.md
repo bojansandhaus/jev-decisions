@@ -37,7 +37,7 @@ Jev Decisions separates them.
 | Is it reversible? | Is the result supported by direct evidence? |
 | Does a person need to approve it? | Should the agent finish, read back, inspect, retry, or ask? |
 
-The host agent still owns credentials, permissions, tool execution, retries, and the final approval flow. Jev Decisions makes the judgment explicit and gives the host a structured answer.
+The host agent still owns credentials, permissions, tool execution, retries, and the final approval flow. Jev Decisions makes the judgment explicit and gives the host a structured answer. That narrow boundary is deliberate: it adds a safety check where intent becomes an external effect, then adds a proof check where the agent claims the work is complete. The framework, tools, and provider remain yours.
 
 ## The product in one picture
 
@@ -273,7 +273,7 @@ The three question types are:
 - **Choice:** one option from a named list.
 - **Score:** a position on an ordered scale.
 
-The answer is structured data. Your agent decides what to do with it.
+The answer is structured data. Your agent decides what to do with it. This keeps the useful part of judgment portable: the same clear question can sit beside Hermes today and behind another agent framework tomorrow, while the host keeps control of execution.
 
 </details>
 
@@ -306,14 +306,6 @@ python3 tools/public_scan.py
 ```
 
 Read [SECURITY.md](SECURITY.md) for the complete security policy.
-
-## Why this is a good product
-
-Jev Decisions works at the narrowest point in an agent system: the moment before intent becomes an external effect, and the moment after an agent claims that the effect happened.
-
-It stays small. It keeps execution with the host. It makes approval visible. It turns verification into a concrete operation instead of a promise. It can start in advisory mode, gather structured outcomes, and become stricter only where your own evidence supports that choice.
-
-That gives you a practical path to safer AI agents without replacing the framework you already use.
 
 ## Frequently asked questions
 
