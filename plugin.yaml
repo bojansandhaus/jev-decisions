@@ -1,0 +1,18 @@
+name: jev-decisions
+version: "0.1.0"
+description: "Typed Jev decisions through OpenRouter's Decisions API"
+author: "Hermes"
+license: MIT
+homepage: "https://openrouter.ai/typesafe/jev-1.13"
+toolsets:
+  - jev
+provides_tools:
+  - jev_decide
+  - jev_workflow
+  - jev_ledger
+  - jev_gateway
+  - jev_ingest
+provides_hooks:
+  - post_llm_call
+  - post_tool_call
+  - pre_tool_call

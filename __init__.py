@@ -1,0 +1,522 @@
+"""Hermes plugin exposing Jev's typed Decisions API through OpenRouter."""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+try:
+    from .runtime import get_secret, get_hermes_home
+except ImportError:
+    from runtime import get_secret, get_hermes_home
+
+try:
+    from .ledger import append as append_ledger, metrics as ledger_metrics, read as read_ledger
+    from .gateway import decide as gateway_decide, verify as gateway_verify, snapshot as gateway_snapshot, classify_case as gateway_classify
+except ImportError:
+    from ledger import append as append_ledger, metrics as ledger_metrics, read as read_ledger
+    from gateway import decide as gateway_decide, verify as gateway_verify, snapshot as gateway_snapshot, classify_case as gateway_classify
+try:
+    from .ingest import ingest_event, update_tool_result
+except ImportError:
+    from ingest import ingest_event, update_tool_result
+
+_TOOLSET = "jev"
+_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
+_MODEL = "typesafe/jev-1.13"
+
+JEV_DECIDE_SCHEMA = {
+    "name": "jev_decide",
+    "description": (
+        "Evaluate bounded text or JSON state with Jev using typed Noul, Choice, "
+        "or Score questions. Returns probabilities and confidence, never prose."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "state": {"description": "Bounded text, object, or array to evaluate."},
+            "questions": {
+                "type": "object",
+                "description": (
+                    "Map of IDs to question objects. Each object requires type exactly "
+                    "noul, choice, or score; instructions; and criteria. Noul criteria "
+                    "is an object with true and false strings, choice criteria is an "
+                    "object of option names to descriptions, score criteria is an array."
+                ),
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["noul", "choice", "score"]},
+                        "instructions": {"type": "string"},
+                        "criteria": {},
+                    },
+                    "required": ["type", "instructions", "criteria"],
+                    "additionalProperties": False,
+                },
+            },
+            "model": {
+                "type": "string",
+                "description": "Pinned Jev model. Defaults to typesafe/jev-1.13.",
+            },
+        },
+        "required": ["state", "questions"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _secret() -> str:
+    value = get_secret("OPENROUTER_API_KEY")
+    if not value:
+        raise RuntimeError("OPENROUTER_API_KEY is not available in the active Hermes secret scope")
+    return value
+
+
+def _request(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = Request(
+        _ENDPOINT,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://hermes-agent.nousresearch.com",
+            "X-Title": "Hermes Jev Decision Adapter",
+        },
+    )
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urlopen(req, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if not isinstance(result, dict) or not isinstance(result.get("answers"), dict):
+                raise RuntimeError("OpenRouter Jev response has no valid answers map")
+            return result
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                detail = exc.read(2048).decode("utf-8", errors="replace")
+                raise RuntimeError(f"OpenRouter Jev HTTP {exc.code}: {detail}") from exc
+        except (URLError, TimeoutError, json.JSONDecodeError, RuntimeError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise RuntimeError(f"OpenRouter Jev request failed: {exc}") from exc
+        time.sleep(2**attempt)
+    raise RuntimeError(f"OpenRouter Jev request failed: {last_error}")
+
+
+def jev_decide_handler(args: dict[str, Any], **_: Any) -> str:
+    state = args.get("state")
+    questions = args.get("questions")
+    if not isinstance(questions, dict) or not questions:
+        return json.dumps({"error": "questions must be a non-empty object"})
+    if not isinstance(state, (str, dict, list)):
+        return json.dumps({"error": "state must be text, an object, or an array"})
+    try:
+        result = _request(
+            {"model": args.get("model") or _MODEL, "state": state, "questions": questions},
+            _secret(),
+        )
+        return json.dumps({"success": True, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage")})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+_WORKFLOW_QUESTIONS = {
+    "goal_judge": {
+        "complete": {"type": "noul", "instructions": "Is the stated task complete?", "criteria": {"true": "All requested deliverables are present and verified", "false": "A requested deliverable is missing or unverified"}},
+        "blocked": {"type": "noul", "instructions": "Is the task blocked by an external dependency?", "criteria": {"true": "Progress requires an unavailable dependency", "false": "The task can continue with available resources"}},
+        "quality": {"type": "score", "instructions": "How good is the result?", "criteria": ["Incomplete or incorrect", "Partially complete", "Complete and acceptable", "Complete and high quality"]},
+    },
+    "memory_gate": {
+        "retain": {"type": "noul", "instructions": "Should this statement become durable memory?", "criteria": {"true": "It is useful beyond this immediate turn", "false": "It is transient, redundant, or not useful later"}},
+        "kind": {"type": "choice", "instructions": "What kind of memory is this?", "criteria": {"fact": "Stable factual information", "preference": "A user preference", "decision": "A chosen course of action", "commitment": "An obligation or promise", "event": "A dated occurrence", "discard": "Not durable memory"}},
+        "sensitive": {"type": "noul", "instructions": "Does this contain sensitive personal information?", "criteria": {"true": "Health, financial, authentication, or highly private data", "false": "Ordinary non-sensitive information"}},
+    },
+    "command_review": {
+        "risk": {"type": "choice", "instructions": "What is the command risk?", "criteria": {"low": "Read-only or easily reversible", "medium": "Changes files or services but is recoverable", "high": "Destructive, credential-related, or externally consequential"}},
+        "recommendation": {"type": "choice", "instructions": "What should Hermes do?", "criteria": {"allow": "Safe to proceed under existing policy", "ask": "Require user confirmation", "deny": "Do not execute"}},
+        "verification_depth": {"type": "choice", "instructions": "How much verification should follow this tool call?", "criteria": {"none": "No external effect or negligible risk", "direct": "Read back the exact target", "recovery": "Backup, execute, read back, and inspect logs", "human": "Require Beau's confirmation"}},
+    },
+    "recall_rerank": {
+        "relevance": {"type": "score", "instructions": "How relevant are these memory candidates to the request?", "criteria": ["Irrelevant", "Weakly relevant", "Relevant", "Directly answers the request"]},
+        "conflict": {"type": "noul", "instructions": "Do the candidates contain a material conflict?", "criteria": {"true": "They assert incompatible facts or preferences", "false": "They are compatible or merely different"}},
+    },
+    "action_verify": {
+        "verified": {"type": "noul", "instructions": "Does the evidence prove the requested action succeeded?", "criteria": {"true": "The exact target was read back or an equivalent direct proof exists", "false": "The result is only claimed, partial, or inferred"}},
+        "followup": {"type": "choice", "instructions": "What is the next action?", "criteria": {"done": "No further action is needed", "retry": "Retry the failed or incomplete operation", "ask": "Ask the user because evidence or authority is missing"}},
+    },
+    "output_review": {
+        "grounded": {"type": "noul", "instructions": "Is the draft answer grounded in the supplied evidence?", "criteria": {"true": "Claims are supported by the evidence", "false": "The draft contains unsupported or invented claims"}},
+        "complete": {"type": "noul", "instructions": "Does the draft answer every requested part?", "criteria": {"true": "All explicit requirements are addressed", "false": "One or more requirements are missing"}},
+        "actionable": {"type": "noul", "instructions": "Does the draft give a concrete next action when one is needed?", "criteria": {"true": "The reader can act without guessing the next step", "false": "The answer only analyzes or reports"}},
+        "next_action": {"type": "choice", "instructions": "What should happen next after this draft?", "criteria": {"act_now": "Take the concrete action stated or implied by the request", "ask_one_question": "Ask one blocking question", "wait_for_evidence": "Gather or verify evidence before acting", "schedule_followup": "Create a later followup", "nothing_needed": "No further action is needed"}},
+        "circling": {"type": "noul", "instructions": "Is the draft circling a decision instead of moving it forward?", "criteria": {"true": "It reopens settled analysis or avoids a decision", "false": "It advances the decision or reports a clear result"}},
+        "risk": {"type": "choice", "instructions": "What is the remaining answer risk?", "criteria": {"low": "Safe to send", "medium": "Needs a small correction or caveat", "high": "Must not be sent without revision"}},
+    },
+    "next_action": {
+        "type": {"type": "choice", "instructions": "What kind of next step does this situation require?", "criteria": {"act_now": "Perform a concrete reversible action", "ask_one_question": "Ask one blocking question", "wait_for_evidence": "Verify missing evidence", "schedule_followup": "Set a future followup", "nothing_needed": "No next step is required"}},
+        "specific": {"type": "noul", "instructions": "Is the proposed next step specific enough to execute?", "criteria": {"true": "A person or agent can execute it without guessing", "false": "It is vague, abstract, or missing an owner"}},
+    },
+    "decision_circling": {
+        "circling": {"type": "noul", "instructions": "Is the conversation repeatedly reopening the same decision?", "criteria": {"true": "The same decision is being analyzed without convergence", "false": "The conversation is making new progress"}},
+        "intervention": {"type": "choice", "instructions": "What intervention is appropriate?", "criteria": {"decide": "Choose and execute the best supported option", "ask": "Ask one question that resolves the block", "stop": "Stop gathering information because the threshold is met", "continue": "More analysis is justified"}},
+    },
+    "plan_review": {
+        "outcome": {"type": "noul", "instructions": "Does the plan define a verifiable outcome?", "criteria": {"true": "Done means an observable result", "false": "The plan describes activity without a finish condition"}},
+        "prerequisites": {"type": "noul", "instructions": "Are the prerequisites and dependencies identified?", "criteria": {"true": "Required inputs, authority, and dependencies are named", "false": "Execution may stall on an unstated dependency"}},
+        "rollback": {"type": "noul", "instructions": "Does the plan include a safe rollback or recovery path?", "criteria": {"true": "Reversal or recovery is defined where needed", "false": "A failed step could leave unclear damage"}},
+        "recommendation": {"type": "choice", "instructions": "What should happen to this plan?", "criteria": {"execute": "Ready to execute", "revise": "Revise before execution", "ask": "Ask for missing authority or information", "reject": "Do not execute"}},
+    },
+    "tool_result_verify": {
+        "verified": {"type": "noul", "instructions": "Does the tool result prove the requested operation succeeded?", "criteria": {"true": "The exact target or equivalent direct evidence is present", "false": "The result is only a claim, partial, stale, or indirect"}},
+        "side_effect": {"type": "choice", "instructions": "What kind of external effect occurred?", "criteria": {"none": "Read-only or no external effect", "reversible": "A reversible external change occurred", "irreversible": "An irreversible or externally consequential change occurred", "unknown": "The effect is unclear"}},
+        "followup": {"type": "choice", "instructions": "What should Hermes do next?", "criteria": {"done": "Record completion", "read_back": "Read back the exact target", "retry": "Retry the operation", "ask": "Ask Beau because evidence or authority is missing"}},
+    },
+    "memory_review": {
+        "retain": {"type": "noul", "instructions": "Should this item be considered for durable memory?", "criteria": {"true": "Useful beyond this turn and not redundant", "false": "Transient, redundant, or not useful later"}},
+        "kind": {"type": "choice", "instructions": "What durable memory kind best fits?", "criteria": {"fact": "Stable fact", "preference": "User preference", "decision": "Decision", "commitment": "Obligation", "event": "Dated event", "discard": "Do not retain"}},
+        "conflict": {"type": "noul", "instructions": "Does this conflict with known memory?", "criteria": {"true": "It contradicts an existing fact or preference", "false": "No material conflict is visible"}},
+    },
+    "verification_depth": {
+        "depth": {"type": "choice", "instructions": "How much verification does this action deserve?", "criteria": {"none": "No external effect or negligible risk", "direct": "One direct read back", "recovery": "Backup, execute, read back, and inspect", "human": "Require Beau's confirmation before proceeding"}},
+        "reason": {"type": "choice", "instructions": "What drives the verification depth?", "criteria": {"risk": "Potential downside", "irreversibility": "Hard to reverse", "uncertainty": "Evidence or authority is unclear", "routine": "Routine low risk operation"}},
+    },
+    "claim_status": {
+        "status": {"type": "choice", "instructions": "What is the evidence status of this claim?", "criteria": {"observed": "Directly observed", "inferred": "Reasonable inference", "assumed": "An assumption", "unverified": "Insufficient evidence", "contradicted": "Conflicts with evidence"}},
+        "citation_needed": {"type": "noul", "instructions": "Does this claim need stronger evidence before being stated as fact?", "criteria": {"true": "It is not directly supported", "false": "The evidence is sufficient"}},
+    },
+    "agent_referee": {
+        "winner": {"type": "choice", "instructions": "Which candidate output is best supported?", "criteria": {"a": "Candidate A", "b": "Candidate B", "c": "Candidate C", "none": "No candidate is sufficient"}},
+        "agreement": {"type": "score", "instructions": "How much do the candidates agree on the answer?", "criteria": ["Contradictory", "Weak overlap", "Mostly agree", "Strong agreement"]},
+        "missing": {"type": "noul", "instructions": "Do all candidates miss a material requirement?", "criteria": {"true": "A requirement is absent from every candidate", "false": "The candidates cover the requirements"}},
+    },
+    "memory_maintenance": {
+        "action": {"type": "choice", "instructions": "What maintenance should happen to this memory set?", "criteria": {"keep": "Keep as is", "merge": "Merge duplicates", "refresh": "Update with newer evidence", "quarantine": "Mark uncertain or conflicting", "discard": "Recommend removal"}},
+        "reason": {"type": "choice", "instructions": "What is the main maintenance reason?", "criteria": {"duplicate": "Redundant entries", "stale": "Likely obsolete", "conflict": "Contradictory entries", "low_value": "Little future value", "clean": "No issue"}},
+    },
+    "anomaly_review": {
+        "anomaly": {"type": "noul", "instructions": "Is there a meaningful operational anomaly?", "criteria": {"true": "The pattern differs from the expected baseline", "false": "The pattern is ordinary variation"}},
+        "severity": {"type": "choice", "instructions": "What is the anomaly severity?", "criteria": {"info": "Track only", "watch": "Inspect soon", "urgent": "Act now", "unknown": "Insufficient evidence"}},
+    },
+    "infrastructure_review": {
+        "risk": {"type": "choice", "instructions": "What is the operational risk?", "criteria": {"low": "Read-only or easily reversible", "medium": "Recoverable service or file change", "high": "Destructive, credential-related, or broad outage risk"}},
+        "backup": {"type": "noul", "instructions": "Is there an adequate rollback or backup path?", "criteria": {"true": "A tested recovery path exists", "false": "Recovery is absent or unclear"}},
+        "verification": {"type": "choice", "instructions": "What verification is required?", "criteria": {"none": "No external effect", "read_back": "Read back the exact target", "logs": "Read back and inspect logs", "human": "Require Beau confirmation"}},
+    },
+    "communication_review": {
+        "send": {"type": "choice", "instructions": "What is the safest communication recommendation?", "criteria": {"send": "Ready to send", "revise": "Revise before sending", "ask": "Clarify recipient or authority", "hold": "Do not send yet"}},
+        "commitment": {"type": "noul", "instructions": "Does this message create a material commitment?", "criteria": {"true": "It promises, accepts, approves, or commits", "false": "It creates no material commitment"}},
+        "sensitive": {"type": "noul", "instructions": "Does the message contain sensitive information that needs review?", "criteria": {"true": "Sensitive or private information is present", "false": "No material sensitive information"}},
+    },
+    "evidence_review": {
+        "support": {"type": "choice", "instructions": "How strongly do the sources support the claim?", "criteria": {"direct": "Directly supported", "inferred": "Reasonable inference", "weak": "Weak support", "contradicted": "Sources conflict with the claim"}},
+        "citation": {"type": "noul", "instructions": "Does the claim need a citation before being stated as fact?", "criteria": {"true": "The evidence is not self evident or directly shown", "false": "The evidence is sufficient"}},
+        "abstain": {"type": "noul", "instructions": "Should the answer abstain or state uncertainty?", "criteria": {"true": "Evidence is insufficient or contradictory", "false": "A bounded answer is supported"}},
+    },
+    "document_quality": {
+        "duplicate": {"type": "noul", "instructions": "Is this document likely a duplicate?", "criteria": {"true": "It repeats an existing document", "false": "It is materially distinct"}},
+        "metadata": {"type": "choice", "instructions": "What metadata action is needed?", "criteria": {"keep": "Metadata is adequate", "complete": "Add missing metadata", "correct": "Correct misclassification", "review": "Require human review"}},
+        "memory": {"type": "choice", "instructions": "What should happen to extracted facts?", "criteria": {"retain": "Retain durable facts", "link": "Link to existing memory", "quarantine": "Hold for review", "discard": "Do not retain"}},
+    },
+    "purchase_review": {
+        "fit": {"type": "choice", "instructions": "How well does the option fit the stated constraints?", "criteria": {"poor": "Misses material requirements", "partial": "Fits some requirements", "good": "Fits the requirements", "unknown": "Important information is missing"}},
+        "evidence": {"type": "choice", "instructions": "How well verified are price, availability, and claims?", "criteria": {"verified": "Directly verified", "mixed": "Some claims verified", "weak": "Mostly unverified", "unknown": "Cannot verify"}},
+        "action": {"type": "choice", "instructions": "What should happen next?", "criteria": {"buy": "Buy now", "compare": "Compare alternatives", "wait": "Wait for evidence or price", "avoid": "Do not buy"}},
+    },
+    "daily_anomaly": {
+        "anomaly": {"type": "noul", "instructions": "Is there a meaningful deviation from the normal baseline?", "criteria": {"true": "The pattern is materially unusual", "false": "The pattern is ordinary variation"}},
+        "severity": {"type": "choice", "instructions": "What is the operational severity?", "criteria": {"info": "Record only", "watch": "Inspect soon", "urgent": "Act now", "unknown": "Insufficient evidence"}},
+        "owner": {"type": "choice", "instructions": "What response is appropriate?", "criteria": {"automated": "A safe deterministic response exists", "human": "Require Beau review", "observe": "Continue observing", "none": "No response needed"}},
+    },
+    "promotion_review": {
+        "promote": {"type": "noul", "instructions": "Is this decision narrow, low risk, and accurate enough to move beyond shadow mode?", "criteria": {"true": "It has stable evidence, a measurable outcome, and a safe fallback", "false": "It is too uncertain, broad, or consequential"}},
+        "scope": {"type": "choice", "instructions": "What is the safest promotion scope?", "criteria": {"observe": "Keep shadow-only", "suggest": "Show a recommendation to Hermes", "gate": "Allow a narrow deterministic gate", "human": "Require Beau review for each case"}},
+        "missing": {"type": "choice", "instructions": "What evidence is still missing?", "criteria": {"labels": "More labeled outcomes", "coverage": "More representative cases", "fallback": "A tested deterministic fallback", "none": "No material gap"}},
+    },
+    "option_select": {
+        "choice": {"type": "choice", "instructions": "Which option best fits the stated objective and constraints?", "criteria": {"a": "Option A", "b": "Option B", "c": "Option C", "none": "No option is sufficiently supported"}},
+        "confidence": {"type": "score", "instructions": "How confident should the decision maker be?", "criteria": ["Insufficient evidence", "Weak recommendation", "Good recommendation", "Strong recommendation"]},
+        "missing": {"type": "noul", "instructions": "Is a material piece of information missing?", "criteria": {"true": "The choice depends on unknown information", "false": "The available information is sufficient"}},
+    },
+    "escalation": {
+        "escalate": {"type": "noul", "instructions": "Should Hermes stop and ask Beau before proceeding?", "criteria": {"true": "Intent, authority, evidence, or safety is materially uncertain", "false": "The action is clear, authorized, and reversible or verified"}},
+        "reason": {"type": "choice", "instructions": "What is the primary escalation reason?", "criteria": {"ambiguity": "User intent is unclear", "authority": "Permission or ownership is unclear", "risk": "The action has meaningful downside", "evidence": "The evidence is insufficient", "none": "No escalation needed"}},
+    },
+}
+
+JEV_INGEST_SCHEMA = {
+    "name": "jev_ingest",
+    "description": "Route an event from Hermes or a connected system into a tracked Jev case.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "source": {"type": "string"},
+            "event_type": {"type": "string"},
+            "payload": {"type": "object"},
+        },
+        "required": ["source", "event_type", "payload"],
+        "additionalProperties": False,
+    },
+}
+
+
+JEV_GATEWAY_SCHEMA = {
+    "name": "jev_gateway",
+    "description": "Use the local deterministic Jev policy and verification gateway. It never executes actions.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["decide", "verify", "classify", "snapshot"]},
+            "domain": {"type": "string"},
+            "state": {"type": "object"},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+
+JEV_LEDGER_SCHEMA = {
+    "name": "jev_ledger",
+    "description": "Record or inspect Jev review outcomes, commitments, decisions, and calibration metrics. Local append-only state only.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["record_review", "record_outcome", "add_commitment", "add_decision", "close", "list", "metrics"]},
+            "review_id": {"type": "string"},
+            "correct": {"type": "boolean"},
+            "text": {"type": "string"},
+            "owner": {"type": "string"},
+            "deadline": {"type": "string"},
+            "status": {"type": "string"},
+            "details": {"description": "Bounded structured details."},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+
+_WORKFLOW_SCHEMA = {
+    "name": "jev_workflow",
+    "description": "Run a predefined Jev shadow evaluation for goal judging, memory gating, command review, recall reranking, or post-action verification. It recommends only and never authorizes, writes, deletes, or routes by itself.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workflow": {"type": "string", "enum": list(_WORKFLOW_QUESTIONS)},
+            "state": {"description": "Bounded state relevant to the selected workflow."},
+            "model": {"type": "string"},
+        },
+        "required": ["workflow", "state"],
+        "additionalProperties": False,
+    },
+}
+
+
+def jev_workflow_handler(args: dict[str, Any], **_: Any) -> str:
+    workflow = args.get("workflow")
+    state = args.get("state")
+    if workflow not in _WORKFLOW_QUESTIONS:
+        return json.dumps({"error": "unknown workflow", "allowed": list(_WORKFLOW_QUESTIONS)})
+    if not isinstance(state, (str, dict, list)):
+        return json.dumps({"error": "state must be text, an object, or an array"})
+    try:
+        result = _request({"model": args.get("model") or _MODEL, "state": state, "questions": _WORKFLOW_QUESTIONS[workflow]}, _secret())
+        return json.dumps({"success": True, "shadow": True, "workflow": workflow, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage")})
+    except Exception as exc:
+        return json.dumps({"error": str(exc), "shadow": True, "workflow": workflow})
+
+
+
+def jev_ingest_handler(args: dict[str, Any], **_: Any) -> str:
+    source = args.get("source")
+    event_type = args.get("event_type")
+    payload = args.get("payload")
+    if not isinstance(source, str) or not isinstance(event_type, str) or not isinstance(payload, dict):
+        return json.dumps({"error": "source, event_type, and payload are required"})
+    return json.dumps({"success": True, **ingest_event(source, event_type, payload)})
+
+
+def jev_gateway_handler(args: dict[str, Any], **_: Any) -> str:
+    action = args.get("action")
+    state = args.get("state") or {}
+    if not isinstance(state, dict):
+        return json.dumps({"error": "state must be an object"})
+    if action == "decide":
+        return json.dumps({"success": True, **gateway_decide(state)})
+    if action == "verify":
+        return json.dumps({"success": True, **gateway_verify(state)})
+    if action == "classify":
+        if not isinstance(args.get("domain"), str):
+            return json.dumps({"error": "classify requires domain"})
+        return json.dumps({"success": True, **gateway_classify(args["domain"], state)})
+    if action == "snapshot":
+        return json.dumps({"success": True, **gateway_snapshot()})
+    return json.dumps({"error": "unknown gateway action"})
+
+
+def jev_ledger_handler(args: dict[str, Any], **_: Any) -> str:
+    action = args.get("action")
+    if action == "list":
+        return json.dumps({"success": True, "entries": read_ledger(200)})
+    if action == "metrics":
+        return json.dumps({"success": True, "metrics": ledger_metrics()})
+    if action == "record_review":
+        review_id = args.get("review_id") or append_ledger("review", {"workflow": args.get("status", "manual"), "details": args.get("details", {})})
+        return json.dumps({"success": True, "review_id": review_id})
+    if action == "record_outcome":
+        if not isinstance(args.get("review_id"), str) or not isinstance(args.get("correct"), bool):
+            return json.dumps({"error": "record_outcome requires review_id and correct"})
+        entry_id = append_ledger("outcome", {"review_id": args["review_id"], "correct": args["correct"], "details": args.get("details", {})})
+        return json.dumps({"success": True, "entry_id": entry_id})
+    if action in {"add_commitment", "add_decision"}:
+        if not isinstance(args.get("text"), str) or not args["text"].strip():
+            return json.dumps({"error": f"{action} requires non-empty text"})
+        entry_id = append_ledger(action.removeprefix("add_"), {"text": args["text"][:4000], "owner": args.get("owner"), "deadline": args.get("deadline"), "status": args.get("status", "open"), "details": args.get("details", {})})
+        return json.dumps({"success": True, "entry_id": entry_id})
+    if action == "close":
+        if not isinstance(args.get("review_id"), str):
+            return json.dumps({"error": "close requires review_id"})
+        entry_id = append_ledger("close", {"review_id": args["review_id"], "status": args.get("status", "closed"), "details": args.get("details", {})})
+        return json.dumps({"success": True, "entry_id": entry_id})
+    return json.dumps({"error": "unknown ledger action"})
+
+
+def _redact_for_review(value: str, limit: int = 12000) -> str:
+    value = value[:limit]
+    patterns = [
+        (r"(?i)bearer\s+[A-Za-z0-9._-]+", "Bearer [REDACTED]"),
+        (r"(?i)(api[_ -]?key|token|password|secret)\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]"),
+    ]
+    for pattern, replacement in patterns:
+        value = re.sub(pattern, replacement, value)
+    return value
+
+
+def _write_shadow_record(record: dict[str, Any]) -> None:
+    path = Path(get_hermes_home()) / "logs" / "jev-shadow.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
+
+
+def _on_post_llm_call(
+    assistant_response: str = "",
+    user_message: str = "",
+    conversation_history: Any = None,
+    **_: Any,
+) -> None:
+    """Review final answers in shadow mode without changing or blocking them."""
+    if not assistant_response:
+        return None
+    request = _redact_for_review(user_message, 4000)
+    draft = _redact_for_review(assistant_response)
+    history = _safe_text(conversation_history, 6000) if conversation_history else ""
+    record: dict[str, Any] = {
+        "event": "jev_output_review",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "draft_sha256": hashlib.sha256(assistant_response.encode("utf-8")).hexdigest(),
+        "draft_chars": len(assistant_response),
+        "request_chars": len(user_message),
+    }
+    try:
+        result = _request(
+            {"model": _MODEL, "state": {"request": request, "draft": draft, "conversation_history": history}, "questions": _WORKFLOW_QUESTIONS["output_review"]},
+            _secret(),
+        )
+        record.update({"success": True, "model": result.get("model"), "answers": result.get("answers"), "usage": result.get("usage")})
+        record["review_id"] = append_ledger("review", {"workflow": "output_review", "answers": result.get("answers")})
+    except Exception as exc:
+        record.update({"success": False, "error_type": type(exc).__name__})
+    try:
+        _write_shadow_record(record)
+    except Exception:
+        return None
+    return None
+
+
+def _safe_text(value: Any, limit: int = 12000) -> str:
+    if isinstance(value, str):
+        return _redact_for_review(value, limit)
+    try:
+        return _redact_for_review(json.dumps(value, ensure_ascii=True, default=str), limit)
+    except Exception:
+        return _redact_for_review(str(value), limit)
+
+
+def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, **_: Any) -> None:
+    """Verify tool results in shadow mode without affecting tool execution."""
+    if not tool_name:
+        return None
+    result_text = _safe_text(result)
+    state = {
+        "tool_name": tool_name,
+        "arguments": _safe_text(args, 5000),
+        "result": result_text,
+    }
+    record: dict[str, Any] = {
+        "event": "jev_tool_result_verify",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool_name": tool_name,
+        "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+        "result_chars": len(result_text),
+    }
+    try:
+        response = _request(
+            {"model": _MODEL, "state": state, "questions": _WORKFLOW_QUESTIONS["tool_result_verify"]},
+            _secret(),
+        )
+        record.update({"success": True, "model": response.get("model"), "answers": response.get("answers"), "usage": response.get("usage")})
+        record["review_id"] = append_ledger("review", {"workflow": "tool_result_verify", "tool_name": tool_name, "answers": response.get("answers")})
+    except Exception as exc:
+        record.update({"success": False, "error_type": type(exc).__name__})
+    try:
+        _write_shadow_record(record)
+    except Exception:
+        return None
+    return None
+
+
+def _on_pre_tool_call(tool_name: str = "", args: Any = None, **_: Any) -> None:
+    """Classify prospective tool risk in shadow mode before execution."""
+    if not tool_name:
+        return None
+    state = {"tool_name": tool_name, "arguments": _safe_text(args, 6000)}
+    record: dict[str, Any] = {
+        "event": "jev_command_review",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool_name": tool_name,
+    }
+    try:
+        response = _request(
+            {"model": _MODEL, "state": state, "questions": _WORKFLOW_QUESTIONS["command_review"]},
+            _secret(),
+        )
+        record.update({"success": True, "model": response.get("model"), "answers": response.get("answers"), "usage": response.get("usage")})
+        record["review_id"] = append_ledger("review", {"workflow": "command_review", "tool_name": tool_name, "answers": response.get("answers")})
+    except Exception as exc:
+        record.update({"success": False, "error_type": type(exc).__name__})
+    try:
+        _write_shadow_record(record)
+    except Exception:
+        return None
+    return None
+
+
+def register(ctx: Any) -> None:
+    ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
+    ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
+    ctx.register_tool("jev_ledger", _TOOLSET, JEV_LEDGER_SCHEMA, jev_ledger_handler, description=JEV_LEDGER_SCHEMA["description"])
+    ctx.register_tool("jev_gateway", _TOOLSET, JEV_GATEWAY_SCHEMA, jev_gateway_handler, description=JEV_GATEWAY_SCHEMA["description"])
+    ctx.register_tool("jev_ingest", _TOOLSET, JEV_INGEST_SCHEMA, jev_ingest_handler, description=JEV_INGEST_SCHEMA["description"])
+    ctx.register_hook("post_llm_call", _on_post_llm_call)
+    ctx.register_hook("post_tool_call", _on_post_tool_call)
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
