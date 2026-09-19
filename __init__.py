@@ -501,7 +501,15 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str 
     """Classify prospective tool risk in shadow mode before execution."""
     if not tool_name:
         return None
-    state = {"tool_name": tool_name, "arguments": _safe_text(args, 6000)}
+    case_id = None
+    try:
+        ingested = ingest_event("hermes", "tool_call", {"tool_name": tool_name, "invocation_id": invocation_id, "arguments": _safe_text(args, 5000)})
+        case_id = ingested.get("case_id")
+        if case_id:
+            loop_record_decision("Should this tool call proceed?", "review_pending", ["allow", "ask", "deny"], [tool_name, _safe_text(args, 5000)], ["Jev review is advisory; Hermes policy remains authoritative"])
+    except Exception:
+        pass
+    state = {"tool_name": tool_name, "arguments": _safe_text(args, 6000), "invocation_id": invocation_id}
     record: dict[str, Any] = {
         "event": "jev_command_review",
         "timestamp": datetime.now(timezone.utc).isoformat(),
