@@ -22,7 +22,7 @@ def commitment_candidates(text: str, limit: int = 20) -> list[dict[str, Any]]:
             for match in list(_COMMITMENT.finditer(text))[:limit]]
 
 
-def promote_commitment(text: str, owner: str = "beau", deadline: str | None = None, next_action: str | None = None) -> str:
+def promote_commitment(text: str, owner: str = "user", deadline: str | None = None, next_action: str | None = None) -> str:
     """Promote a reviewed candidate into a durable commitment record."""
     if not text.strip():
         raise ValueError("commitment text must not be empty")

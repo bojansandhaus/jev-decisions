@@ -12,7 +12,7 @@ except ImportError:
     from ledger import append, read
 
 
-def open_case(domain: str, state: dict[str, Any], owner: str = "beau") -> str:
+def open_case(domain: str, state: dict[str, Any], owner: str = "user") -> str:
     classification = classify_case(domain, state)
     case_id = append("case", {
         "status": "open",

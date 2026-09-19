@@ -37,3 +37,12 @@ jobs:
 
       - name: Scan public files
         run: python tools/public_scan.py
+
+      - name: Install public package
+        run: python -m pip install .
+
+      - name: Smoke test installed package outside checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -c 'import closed_loop, gateway; assert gateway.verify({})["verified"] is False'
+          printf '%s\n' '{"changed":true,"read_back":true,"evidence":true}' | jev-gateway verify

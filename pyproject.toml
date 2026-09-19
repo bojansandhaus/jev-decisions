@@ -18,6 +18,7 @@ test = ["pytest>=8"]
 [tool.setuptools]
 py-modules = [
     "__init__",
+    "closed_loop",
     "cockpit",
     "fabric",
     "gateway",

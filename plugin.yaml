@@ -1,9 +1,9 @@
 name: jev-decisions
 version: "0.1.0"
-description: "Typed Jev decisions through OpenRouter's Decisions API"
-author: "Hermes"
+description: "Jev Decisions Plugin for Hermes (and other AI Agents): action reviews, local policy, and evidence checks"
+author: "Bojan Sandhaus"
 license: MIT
-homepage: "https://openrouter.ai/typesafe/jev-1.13"
+homepage: "https://github.com/bojansandhaus/jev-decisions"
 toolsets:
   - jev
 provides_tools:

@@ -10,6 +10,8 @@ Jev Decisions reviews actions and checks evidence. It does not execute model rec
 - Treat every model answer as a recommendation, never as permission.
 - Keep human approval in front of destructive or difficult to reverse actions.
 - Read the exact target back after every state changing operation.
+- Networked observer hooks are disabled unless `JEV_ENABLE_HOOKS` is explicitly enabled.
+- Hook records omit submitted tool arguments and result text, but manual journal tools persist the text they receive.
 
 ## Report a security problem
 

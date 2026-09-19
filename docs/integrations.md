@@ -1,4 +1,4 @@
-# Integration guide
+# Jev Decisions Plugin for Hermes and other AI Agents: Integration guide
 
 Jev Decisions has one provider specific edge and one provider independent boundary.
 
@@ -35,7 +35,7 @@ A framework adapter only needs to do five things:
 2. Ask a typed Jev question, or use its own provider for semantic judgment.
 3. Call `gateway.decide(state)` before an external action.
 4. Execute the action only under the host framework's authority rules.
-5. Call `gateway.verify(result_state)` and read back the exact target.
+5. Read back the exact target, derive proof fields from that observation, then call `gateway.verify(result_state)`.
 
 A minimal adapter can use the deterministic boundary without making a network request:
 
@@ -71,7 +71,7 @@ printf '%s\n' '{"changed":true,"read_back":true,"evidence":true}' \
   | jev-gateway verify
 ```
 
-The JSON output is stable enough for a shell wrapper, an MCP tool, an HTTP service, or a workflow engine. Pin the project version in deployments and validate the fields you depend on.
+The current JSON output can be wrapped by a shell wrapper, an MCP tool, an HTTP service, or a workflow engine. Pin the project version in deployments and validate the fields you depend on.
 
 ## Redaction pattern
 
@@ -106,7 +106,16 @@ Hermes maps the integration contract onto its tool and hook system:
 - `jev_workflow` selects a bounded workflow definition.
 - `jev_gateway` applies local policy and verification.
 - `jev_ingest` opens a classified case from an event.
-- `jev_ledger` records structured metadata.
+- `jev_ledger` records reviews and manually supplied commitments and decisions.
+- `jev_loop` links decisions, observations, and outcomes.
 - The three hooks observe tool calls and model output in shadow mode.
 
 The same boundary can sit behind another agent without importing Hermes internals. Only the plugin registration layer is Hermes specific.
+
+## Hook privacy and cost control
+
+Observer hooks are opt in. The three hooks are registered for discovery but perform reviews only when `JEV_ENABLE_HOOKS` is set to `1`, `true`, `yes`, or `on`. The default is disabled, so installation does not create provider calls or hook records.
+
+When enabled, hooks remain advisory and do not block, authorize, execute, or read targets back. Tool hook journal records store hashes, lengths, workflow metadata, and verification state instead of submitted arguments or result text. Manual `jev_loop` journal entries intentionally persist the text supplied to that tool, so use that tool only for information suitable for local durable storage.
+
+The host integration remains responsible for explicit `changed`, `read_back`, and `evidence` boolean proof fields. Missing or non-boolean fields never count as verification.

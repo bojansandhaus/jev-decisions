@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -34,6 +35,11 @@ except ImportError:
 _TOOLSET = "jev"
 _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 _MODEL = "typesafe/jev-1.13"
+
+
+def _hooks_enabled() -> bool:
+    """Enable networked observer hooks only when explicitly opted in."""
+    return os.environ.get("JEV_ENABLE_HOOKS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 JEV_DECIDE_SCHEMA = {
     "name": "jev_decide",
@@ -147,7 +153,7 @@ _WORKFLOW_QUESTIONS = {
     "command_review": {
         "risk": {"type": "choice", "instructions": "What is the command risk?", "criteria": {"low": "Read-only or easily reversible", "medium": "Changes files or services but is recoverable", "high": "Destructive, credential-related, or externally consequential"}},
         "recommendation": {"type": "choice", "instructions": "What should Hermes do?", "criteria": {"allow": "Safe to proceed under existing policy", "ask": "Require user confirmation", "deny": "Do not execute"}},
-        "verification_depth": {"type": "choice", "instructions": "How much verification should follow this tool call?", "criteria": {"none": "No external effect or negligible risk", "direct": "Read back the exact target", "recovery": "Backup, execute, read back, and inspect logs", "human": "Require Beau's confirmation"}},
+        "verification_depth": {"type": "choice", "instructions": "How much verification should follow this tool call?", "criteria": {"none": "No external effect or negligible risk", "direct": "Read back the exact target", "recovery": "Backup, execute, read back, and inspect logs", "human": "Require user confirmation"}},
     },
     "recall_rerank": {
         "relevance": {"type": "score", "instructions": "How relevant are these memory candidates to the request?", "criteria": ["Irrelevant", "Weakly relevant", "Relevant", "Directly answers the request"]},
@@ -182,7 +188,7 @@ _WORKFLOW_QUESTIONS = {
     "tool_result_verify": {
         "verified": {"type": "noul", "instructions": "Does the tool result prove the requested operation succeeded?", "criteria": {"true": "The exact target or equivalent direct evidence is present", "false": "The result is only a claim, partial, stale, or indirect"}},
         "side_effect": {"type": "choice", "instructions": "What kind of external effect occurred?", "criteria": {"none": "Read-only or no external effect", "reversible": "A reversible external change occurred", "irreversible": "An irreversible or externally consequential change occurred", "unknown": "The effect is unclear"}},
-        "followup": {"type": "choice", "instructions": "What should Hermes do next?", "criteria": {"done": "Record completion", "read_back": "Read back the exact target", "retry": "Retry the operation", "ask": "Ask Beau because evidence or authority is missing"}},
+        "followup": {"type": "choice", "instructions": "What should Hermes do next?", "criteria": {"done": "Record completion", "read_back": "Read back the exact target", "retry": "Retry the operation", "ask": "Ask the user because evidence or authority is missing"}},
     },
     "memory_review": {
         "retain": {"type": "noul", "instructions": "Should this item be considered for durable memory?", "criteria": {"true": "Useful beyond this turn and not redundant", "false": "Transient, redundant, or not useful later"}},
@@ -190,7 +196,7 @@ _WORKFLOW_QUESTIONS = {
         "conflict": {"type": "noul", "instructions": "Does this conflict with known memory?", "criteria": {"true": "It contradicts an existing fact or preference", "false": "No material conflict is visible"}},
     },
     "verification_depth": {
-        "depth": {"type": "choice", "instructions": "How much verification does this action deserve?", "criteria": {"none": "No external effect or negligible risk", "direct": "One direct read back", "recovery": "Backup, execute, read back, and inspect", "human": "Require Beau's confirmation before proceeding"}},
+        "depth": {"type": "choice", "instructions": "How much verification does this action deserve?", "criteria": {"none": "No external effect or negligible risk", "direct": "One direct read back", "recovery": "Backup, execute, read back, and inspect", "human": "Require user confirmation before proceeding"}},
         "reason": {"type": "choice", "instructions": "What drives the verification depth?", "criteria": {"risk": "Potential downside", "irreversibility": "Hard to reverse", "uncertainty": "Evidence or authority is unclear", "routine": "Routine low risk operation"}},
     },
     "claim_status": {
@@ -213,7 +219,7 @@ _WORKFLOW_QUESTIONS = {
     "infrastructure_review": {
         "risk": {"type": "choice", "instructions": "What is the operational risk?", "criteria": {"low": "Read-only or easily reversible", "medium": "Recoverable service or file change", "high": "Destructive, credential-related, or broad outage risk"}},
         "backup": {"type": "noul", "instructions": "Is there an adequate rollback or backup path?", "criteria": {"true": "A tested recovery path exists", "false": "Recovery is absent or unclear"}},
-        "verification": {"type": "choice", "instructions": "What verification is required?", "criteria": {"none": "No external effect", "read_back": "Read back the exact target", "logs": "Read back and inspect logs", "human": "Require Beau confirmation"}},
+        "verification": {"type": "choice", "instructions": "What verification is required?", "criteria": {"none": "No external effect", "read_back": "Read back the exact target", "logs": "Read back and inspect logs", "human": "Require user confirmation"}},
     },
     "communication_review": {
         "send": {"type": "choice", "instructions": "What is the safest communication recommendation?", "criteria": {"send": "Ready to send", "revise": "Revise before sending", "ask": "Clarify recipient or authority", "hold": "Do not send yet"}},
@@ -238,11 +244,11 @@ _WORKFLOW_QUESTIONS = {
     "daily_anomaly": {
         "anomaly": {"type": "noul", "instructions": "Is there a meaningful deviation from the normal baseline?", "criteria": {"true": "The pattern is materially unusual", "false": "The pattern is ordinary variation"}},
         "severity": {"type": "choice", "instructions": "What is the operational severity?", "criteria": {"info": "Record only", "watch": "Inspect soon", "urgent": "Act now", "unknown": "Insufficient evidence"}},
-        "owner": {"type": "choice", "instructions": "What response is appropriate?", "criteria": {"automated": "A safe deterministic response exists", "human": "Require Beau review", "observe": "Continue observing", "none": "No response needed"}},
+        "owner": {"type": "choice", "instructions": "What response is appropriate?", "criteria": {"automated": "A safe deterministic response exists", "human": "Require user review", "observe": "Continue observing", "none": "No response needed"}},
     },
     "promotion_review": {
         "promote": {"type": "noul", "instructions": "Is this decision narrow, low risk, and accurate enough to move beyond shadow mode?", "criteria": {"true": "It has stable evidence, a measurable outcome, and a safe fallback", "false": "It is too uncertain, broad, or consequential"}},
-        "scope": {"type": "choice", "instructions": "What is the safest promotion scope?", "criteria": {"observe": "Keep shadow-only", "suggest": "Show a recommendation to Hermes", "gate": "Allow a narrow deterministic gate", "human": "Require Beau review for each case"}},
+        "scope": {"type": "choice", "instructions": "What is the safest promotion scope?", "criteria": {"observe": "Keep shadow-only", "suggest": "Show a recommendation to Hermes", "gate": "Allow a narrow deterministic gate", "human": "Require user review for each case"}},
         "missing": {"type": "choice", "instructions": "What evidence is still missing?", "criteria": {"labels": "More labeled outcomes", "coverage": "More representative cases", "fallback": "A tested deterministic fallback", "none": "No material gap"}},
     },
     "option_select": {
@@ -251,7 +257,7 @@ _WORKFLOW_QUESTIONS = {
         "missing": {"type": "noul", "instructions": "Is a material piece of information missing?", "criteria": {"true": "The choice depends on unknown information", "false": "The available information is sufficient"}},
     },
     "escalation": {
-        "escalate": {"type": "noul", "instructions": "Should Hermes stop and ask Beau before proceeding?", "criteria": {"true": "Intent, authority, evidence, or safety is materially uncertain", "false": "The action is clear, authorized, and reversible or verified"}},
+        "escalate": {"type": "noul", "instructions": "Should Hermes stop and ask the user before proceeding?", "criteria": {"true": "Intent, authority, evidence, or safety is materially uncertain", "false": "The action is clear, authorized, and reversible or verified"}},
         "reason": {"type": "choice", "instructions": "What is the primary escalation reason?", "criteria": {"ambiguity": "User intent is unclear", "authority": "Permission or ownership is unclear", "risk": "The action has meaningful downside", "evidence": "The evidence is insufficient", "none": "No escalation needed"}},
     },
 }
@@ -419,6 +425,8 @@ def _on_post_llm_call(
     **_: Any,
 ) -> None:
     """Review final answers in shadow mode without changing or blocking them."""
+    if not _hooks_enabled():
+        return None
     if not assistant_response:
         return None
     request = _redact_for_review(user_message, 4000)
@@ -458,19 +466,26 @@ def _safe_text(value: Any, limit: int = 12000) -> str:
 
 def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, invocation_id: str | None = None, **_: Any) -> None:
     """Verify tool results in shadow mode without affecting tool execution."""
+    if not _hooks_enabled():
+        return None
     if not tool_name:
         return None
     result_text = _safe_text(result)
     verification = gateway_verify({
-        "changed": bool(isinstance(args, dict) and args.get("changed")),
-        "read_back": bool(isinstance(args, dict) and args.get("read_back")),
-        "evidence": bool(result_text),
+        "changed": args.get("changed") if isinstance(args, dict) else None,
+        "read_back": args.get("read_back") if isinstance(args, dict) else None,
+        "evidence": args.get("evidence") if isinstance(args, dict) else None,
     })
-    case_id = update_tool_result(tool_name, result_text, verified=verification["verified"], invocation_id=invocation_id)
+    result_metadata = {
+        "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+        "result_chars": len(result_text),
+        "verified": verification["verified"],
+    }
+    case_id = update_tool_result(tool_name, result_metadata, verified=verification["verified"], invocation_id=invocation_id)
     if case_id:
         try:
-            loop_record_observation(case_id, result_text, f"tool:{tool_name}", None)
-            loop_record_outcome(case_id, "verified" if verification["verified"] else "awaiting_verification", verification["verified"], result_text, verification["next"])
+            loop_record_observation(case_id, "tool result observed; content omitted", f"tool:{tool_name}", None)
+            loop_record_outcome(case_id, "verified" if verification["verified"] else "awaiting_verification", True if verification["verified"] else None, result_metadata, verification["next"])
         except Exception:
             pass
     state = {
@@ -504,14 +519,18 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
 
 def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str | None = None, **_: Any) -> None:
     """Classify prospective tool risk in shadow mode before execution."""
+    if not _hooks_enabled():
+        return None
     if not tool_name:
         return None
     case_id = None
     try:
-        ingested = ingest_event("hermes", "tool_call", {"tool_name": tool_name, "invocation_id": invocation_id, "arguments": _safe_text(args, 5000)})
+        arguments = _safe_text(args, 5000)
+        metadata = {"tool_name": tool_name, "invocation_id": invocation_id, "arguments_sha256": hashlib.sha256(arguments.encode()).hexdigest(), "arguments_chars": len(arguments)}
+        ingested = ingest_event("hermes", "tool_call", metadata)
         case_id = ingested.get("case_id")
         if case_id:
-            loop_record_decision("Should this tool call proceed?", "review_pending", ["allow", "ask", "deny"], [tool_name, _safe_text(args, 5000)], ["Jev review is advisory; Hermes policy remains authoritative"], decision_id=case_id)
+            loop_record_decision("Should this tool call proceed?", "review_pending", ["allow", "ask", "deny"], [metadata], ["Jev review is advisory; Hermes policy remains authoritative"], decision_id=case_id)
     except Exception:
         pass
     state = {"tool_name": tool_name, "arguments": _safe_text(args, 6000), "invocation_id": invocation_id}
@@ -537,13 +556,14 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str 
 
 
 async def _on_platform_event(event: Any, source: Any = None) -> None:
-    """Record gateway-normalized platform events without affecting delivery."""
+    """Record gateway-normalized platform event metadata when opted in."""
+    if not _hooks_enabled():
+        return
     try:
-        from ingest import ingest_event
         platform = getattr(source, "platform", None) if source is not None else None
         name = getattr(platform, "value", str(platform or "gateway"))
-        payload = event if isinstance(event, dict) else {"text": str(event)[:4000]}
-        ingest_event(name, "platform_event", payload)
+        content = _safe_text(event, 4000)
+        ingest_event(name, "platform_event", {"content_sha256": hashlib.sha256(content.encode()).hexdigest(), "content_chars": len(content)})
     except Exception:
         return
 
@@ -586,7 +606,7 @@ def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
     action = args.get("action")
     try:
         if action == "record_decision":
-            result = loop_record_decision(args.get("question", ""), args.get("chosen", ""), args.get("options"), args.get("evidence"), args.get("assumptions"), args.get("owner", "beau"), args.get("deadline"))
+            result = loop_record_decision(args.get("question", ""), args.get("chosen", ""), args.get("options"), args.get("evidence"), args.get("assumptions"), args.get("owner", "user"), args.get("deadline"))
         elif action == "record_observation":
             result = loop_record_observation(args["decision_id"], args.get("observation", ""), args.get("source", "unknown"), args.get("supports"))
         elif action == "record_outcome":

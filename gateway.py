@@ -34,17 +34,24 @@ def decide(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify(state: dict[str, Any]) -> dict[str, Any]:
-    changed = bool(state.get("changed"))
-    read_back = bool(state.get("read_back"))
-    evidence = bool(state.get("evidence"))
-    if changed and not read_back:
+    """Require explicit boolean proof for a changed external target.
+
+    Missing or non-boolean fields are not evidence. The gateway reports the
+    next verification step and never treats an unobserved result as success.
+    """
+    changed = state.get("changed")
+    read_back = state.get("read_back")
+    evidence = state.get("evidence")
+    if changed is not True:
+        next_step = "establish_change"
+    elif read_back is not True:
         next_step = "read_back"
-    elif changed and not evidence:
+    elif evidence is not True:
         next_step = "inspect_evidence"
     else:
         next_step = "done"
     return {
-        "verified": bool((not changed) or (read_back and evidence)),
+        "verified": changed is True and read_back is True and evidence is True,
         "next": next_step,
         "authority": "deterministic_verification",
     }
