@@ -12,6 +12,7 @@ provides_tools:
   - jev_ledger
   - jev_gateway
   - jev_ingest
+  - jev_loop
 provides_hooks:
   - post_llm_call
   - post_tool_call
