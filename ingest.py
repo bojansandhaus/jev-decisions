@@ -43,12 +43,22 @@ def ingest_event(source: str, event_type: str, payload: dict[str, Any]) -> dict[
     return {"case_id": case_id, "domain": domain, "source": source, "event_type": event_type}
 
 
-def update_tool_result(tool_name: str, result: Any, verified: bool = False) -> str | None:
-    case_id = _ACTIVE_CASES.get(str(tool_name))
+def update_tool_result(
+    tool_name: str,
+    result: Any,
+    verified: bool = False,
+    invocation_id: str | None = None,
+) -> str | None:
+    case_id = (_ACTIVE_INVOCATIONS.get(str(invocation_id)) if invocation_id else None)
+    if not case_id:
+        case_id = _ACTIVE_CASES.get(str(tool_name))
     if not case_id:
         return None
     status = "resolved" if verified else "awaiting_verification"
     close_case(case_id, status, {"tool_name": tool_name, "result": str(result)[:4000], "verified": verified})
     if verified:
-        _ACTIVE_CASES.pop(str(tool_name), None)
+        if invocation_id:
+            _ACTIVE_INVOCATIONS.pop(str(invocation_id), None)
+        if _ACTIVE_CASES.get(str(tool_name)) == case_id:
+            _ACTIVE_CASES.pop(str(tool_name), None)
     return case_id
