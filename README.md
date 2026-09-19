@@ -2,7 +2,6 @@
 
 ### Typed model judgments, deterministic authority
 
-[![CI](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml/badge.svg)](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 
@@ -257,7 +256,7 @@ jev-decisions/
 │   ├── public_scan.py      Public safety scan
 ├── tests/
 ├── docs/
-└── .github/workflows/ci.yml
+└── pyproject.toml
 ```
 
 ## Design principles
