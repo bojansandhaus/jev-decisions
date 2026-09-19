@@ -513,7 +513,23 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None, **_: Any) -> None:
     return None
 
 
-def register(ctx: Any) -> None:
+async def _on_platform_event(event: Any, source: Any = None) -> None:
+    """Record gateway-normalized platform events without affecting delivery."""
+    try:
+        from ingest import ingest_event
+        platform = getattr(source, "platform", None) if source is not None else None
+        name = getattr(platform, "value", str(platform or "gateway"))
+        payload = event if isinstance(event, dict) else {"text": str(event)[:4000]}
+        ingest_event(name, "platform_event", payload)
+    except Exception:
+        return
+
+
+def _wire_platform_event_handler(native: Any, adapter: Any) -> None:
+    setter = getattr(adapter, "set_platform_event_handler", None)
+    if setter is not None:
+        setter(_on_platform_event)
+
     ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
     ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
     ctx.register_tool("jev_ledger", _TOOLSET, JEV_LEDGER_SCHEMA, jev_ledger_handler, description=JEV_LEDGER_SCHEMA["description"])
