@@ -506,7 +506,7 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str 
         ingested = ingest_event("hermes", "tool_call", {"tool_name": tool_name, "invocation_id": invocation_id, "arguments": _safe_text(args, 5000)})
         case_id = ingested.get("case_id")
         if case_id:
-            loop_record_decision("Should this tool call proceed?", "review_pending", ["allow", "ask", "deny"], [tool_name, _safe_text(args, 5000)], ["Jev review is advisory; Hermes policy remains authoritative"])
+            loop_record_decision("Should this tool call proceed?", "review_pending", ["allow", "ask", "deny"], [tool_name, _safe_text(args, 5000)], ["Jev review is advisory; Hermes policy remains authoritative"], decision_id=case_id)
     except Exception:
         pass
     state = {"tool_name": tool_name, "arguments": _safe_text(args, 6000), "invocation_id": invocation_id}
