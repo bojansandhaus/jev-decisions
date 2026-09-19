@@ -62,9 +62,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_NAME = "typesafe-jev"
-DEFAULT_BASE_URL = "https://api.typesafe.ai/v1"
-SENTINEL_ENV = "TYPESAFE_API_KEY"
+PROVIDER_NAME = "jev-decisions-approval"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/alpha"
+SENTINEL_ENV = "OPENROUTER_API_KEY"
 
 # Route table: host -> (decision endpoint, model-list URL, model-list JSON key).
 # OpenRouter proxies the same model and bills the same published rate, but on a different
@@ -459,6 +459,8 @@ class JevClient:
     def __init__(self, *, api_key: str = "", base_url: str = "", timeout: float = 30.0, **_: Any):
         self.api_key = api_key or os.environ.get(SENTINEL_ENV, "")
         self.base_url = base_url or DEFAULT_BASE_URL
+        if (urllib.parse.urlparse(self.base_url).hostname or "").lower() != _OPENROUTER_HOST:
+            raise RuntimeError(f"{PROVIDER_NAME}: only the OpenRouter Decisions route is supported")
         self._timeout = timeout
         self.is_closed = False
         self.chat = SimpleNamespace(
@@ -652,7 +654,7 @@ def _build_profile():
         # ponytail: exactly one alias. Every registered name is a separate entry in the
         # auxiliary auto-fallback chain (_resolve_api_key_provider walks PROVIDER_REGISTRY),
         # so each extra name is one more chance to be picked for a task Jev cannot do.
-        aliases=("jev",),
+        aliases=(),
         display_name="TypeSafe Jev (smart approvals only)",
         description="System One decision model — for auxiliary.approval, not chat",
         signup_url="https://console.typesafe.ai/settings/keys",

@@ -5,16 +5,13 @@ version: "0.2.0"
 # import time). A provider registered later — e.g. from register(ctx) under `standalone` —
 # is absent from that registry and resolve_provider_client rejects the name as unknown.
 kind: model-provider
-description: "APPROVALS ONLY. Registers TypeSafe's Jev decision model as a Hermes provider for the single purpose of serving `auxiliary.approval` when `approvals.mode: smart`. Jev returns typed probabilities instead of text, which is the native shape of the guardian's APPROVE/DENY/ESCALATE question; measured on 156 real commands from this machine's own history it was 9.8x faster than the aux chat model with 4.2x fewer human prompts. Two routes, chosen by `base_url`: TypeSafe direct (`/systemone`) or OpenRouter, which hosts the same model at the same published price (`/decisions`). It CANNOT generate text, so it refuses any prompt that is not the smart-approval guardian's — never set it as a chat provider or for any other auxiliary task."
+description: "APPROVALS ONLY. Registers Jev as an OpenRouter backed Hermes provider for the single purpose of serving `auxiliary.approval` when `approvals.mode: smart`. Jev returns typed probabilities instead of text, which is the native shape of the guardian's APPROVE/DENY/ESCALATE question. It CANNOT generate text, so it refuses any prompt that is not the smart-approval guardian's; never set it as a chat provider or for any other auxiliary task."
 author: "anpicasso"
 requires_env:
-  - TYPESAFE_API_KEY
+  - OPENROUTER_API_KEY
 python_dependencies: []
-# Optional. Only needed for an aggregator route whose credential Hermes does not already
-# hold in a provider pool: `auxiliary.approval.api_key`/`key_env` cannot be used, because a
-# key set beside `base_url` in task config collapses the provider to "custom" and bypasses
-# this plugin entirely. Leave unset for TypeSafe direct, and for OpenRouter when
-# `hermes auth add openrouter` has been run.
+# The provider is intentionally OpenRouter only for this release. Do not add an inline key
+# beside base_url, because Hermes resolves that shape as a generic custom provider.
 config_schema:
   key_env:
     type: string
