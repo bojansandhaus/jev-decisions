@@ -36,6 +36,18 @@ def promote_commitment(text: str, owner: str = "beau", deadline: str | None = No
     })
 
 
+def snapshot() -> dict[str, Any]:
+    cases = queue()
+    open_cases = [case for case in cases if case.get("status") == "open"]
+    domains = Counter(case.get("domain", "unknown") for case in open_cases)
+    return {
+        "open_cases": len(open_cases),
+        "total_cases": len(cases),
+        "by_domain": dict(sorted(domains.items())),
+        "ledger": metrics(),
+    }
+
+
 def stale_cases(days: int = 7) -> list[dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, days))
     result = []
@@ -52,16 +64,5 @@ def stale_cases(days: int = 7) -> list[dict[str, Any]]:
 def digest() -> dict[str, Any]:
     report = snapshot()
     report["stale_cases"] = len(stale_cases())
-    report["commitment_candidates"] = 0
     report["next_action"] = "review open cases and verify awaiting_verification results"
     return report
-
-    cases = queue()
-    open_cases = [case for case in cases if case.get("status") == "open"]
-    domains = Counter(case.get("domain", "unknown") for case in open_cases)
-    return {
-        "open_cases": len(open_cases),
-        "total_cases": len(cases),
-        "by_domain": dict(sorted(domains.items())),
-        "ledger": metrics(),
-    }
