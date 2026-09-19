@@ -94,24 +94,55 @@ def record_outcome(decision_id: str, status: str, success: bool | None, evidence
     return {"outcome_id": outcome_id, "decision_id": decision_id, "kind": "outcome"}
 
 
+def label_outcome(decision_id: str, success: bool, evidence: Any, labeler: str = "beau", notes: str = "") -> dict[str, Any]:
+    label_id = _append("outcome_label", {
+        "decision_id": decision_id,
+        "success": bool(success),
+        "evidence": evidence,
+        "labeler": labeler,
+        "notes": notes[:4000],
+    })
+    return {"label_id": label_id, "decision_id": decision_id, "kind": "outcome_label"}
+
+
+def reopen(decision_id: str, reason: str, evidence: Any = None) -> dict[str, Any]:
+    update_id = _append("reopen", {
+        "decision_id": decision_id,
+        "reason": reason[:4000],
+        "evidence": evidence,
+        "status": "reopened",
+    })
+    return {"update_id": update_id, "decision_id": decision_id, "status": "reopened"}
+
+
 def assess(decision_id: str) -> dict[str, Any]:
     rows = [row for row in _read() if row.get("decision_id") == decision_id]
     decision = next((row for row in rows if row.get("kind") == "decision"), None)
-    outcomes = [row for row in rows if row.get("kind") == "outcome" and isinstance(row.get("success"), bool)]
+    labels = [row for row in rows if row.get("kind") == "outcome_label" and isinstance(row.get("success"), bool)]
+    outcomes = labels or [row for row in rows if row.get("kind") == "outcome" and isinstance(row.get("success"), bool)]
     successes = sum(1 for row in outcomes if row.get("success") is True)
     accuracy = round(successes / len(outcomes), 4) if outcomes else None
-    if len(outcomes) >= 5 and accuracy is not None and (accuracy <= 0.6 or accuracy >= 0.9):
+    reopened = any(row.get("kind") == "reopen" for row in rows)
+    if reopened:
+        recommendation = "review_new_evidence"
+        reason = "later evidence reopened this decision"
+        status = "reopened"
+    elif len(outcomes) >= 5 and accuracy is not None and (accuracy <= 0.6 or accuracy >= 0.9):
         recommendation = "change_behavior"
-        reason = "repeated outcomes provide enough evidence to review the current behavior"
+        reason = "repeated labeled outcomes provide enough evidence to review the current behavior"
+        status = "closed"
     elif outcomes:
         recommendation = "continue_observing"
         reason = "outcome evidence exists but is not yet decisive"
+        status = "closed"
     else:
         recommendation = "collect_outcome"
         reason = "the decision has no recorded outcome"
+        status = "open"
     return {
         "decision_id": decision_id,
         "found": decision is not None,
+        "status": status,
         "question": decision.get("question") if decision else None,
         "chosen": decision.get("chosen") if decision else None,
         "observations": sum(1 for row in rows if row.get("kind") == "observation"),

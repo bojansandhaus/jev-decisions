@@ -28,9 +28,9 @@ try:
 except ImportError:
     from ingest import ingest_event, update_tool_result
 try:
-    from .closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
+    from .closed_loop import assess as loop_assess, label_outcome as loop_label_outcome, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome, reopen as loop_reopen
 except ImportError:
-    from closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
+    from closed_loop import assess as loop_assess, label_outcome as loop_label_outcome, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome, reopen as loop_reopen
 try:
     from .verification import verify_observation
 except ImportError:
