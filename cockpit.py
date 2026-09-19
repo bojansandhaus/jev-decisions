@@ -22,7 +22,40 @@ def commitment_candidates(text: str, limit: int = 20) -> list[dict[str, Any]]:
             for match in list(_COMMITMENT.finditer(text))[:limit]]
 
 
-def snapshot() -> dict[str, Any]:
+def promote_commitment(text: str, owner: str = "beau", deadline: str | None = None, next_action: str | None = None) -> str:
+    """Promote a reviewed candidate into a durable commitment record."""
+    if not text.strip():
+        raise ValueError("commitment text must not be empty")
+    return append("commitment", {
+        "text": text.strip(),
+        "owner": owner,
+        "deadline": deadline,
+        "next_action": next_action or text.strip(),
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def stale_cases(days: int = 7) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, days))
+    result = []
+    for case in queue(status="open"):
+        try:
+            opened = datetime.fromisoformat(str(case.get("opened_at")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if opened < cutoff:
+            result.append(case)
+    return result
+
+
+def digest() -> dict[str, Any]:
+    report = snapshot()
+    report["stale_cases"] = len(stale_cases())
+    report["commitment_candidates"] = 0
+    report["next_action"] = "review open cases and verify awaiting_verification results"
+    return report
+
     cases = queue()
     open_cases = [case for case in cases if case.get("status") == "open"]
     domains = Counter(case.get("domain", "unknown") for case in open_cases)
