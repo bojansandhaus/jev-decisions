@@ -538,4 +538,7 @@ def register(ctx: Any) -> None:
     ctx.register_tool("jev_ingest", _TOOLSET, JEV_INGEST_SCHEMA, jev_ingest_handler, description=JEV_INGEST_SCHEMA["description"])
     ctx.register_hook("post_llm_call", _on_post_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
-    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
+    register_platform_handler = getattr(ctx, "register_platform_handler", None)
+    if register_platform_handler is not None:
+        for platform in ("homeassistant", "email", "telegram", "discord", "matrix", "dingtalk"):
+            register_platform_handler(platform, _wire_platform_event_handler)
