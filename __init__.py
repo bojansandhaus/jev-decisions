@@ -530,6 +530,7 @@ def _wire_platform_event_handler(native: Any, adapter: Any) -> None:
     if setter is not None:
         setter(_on_platform_event)
 
+def register(ctx: Any) -> None:
     ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
     ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
     ctx.register_tool("jev_ledger", _TOOLSET, JEV_LEDGER_SCHEMA, jev_ledger_handler, description=JEV_LEDGER_SCHEMA["description"])
