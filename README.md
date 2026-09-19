@@ -1,55 +1,62 @@
-# Jev Decisions for Hermes and other AI agents
+<div align="center">
+  <h1>Jev Decisions</h1>
+  <p><strong>Safety checks for Hermes and other AI agents.</strong></p>
+  <p>Know when to act. Know when to ask. Know when the work is actually done.</p>
 
-[![CI](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml/badge.svg)](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
+  <p>
+    <a href="https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml"><img src="https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License"></a>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB.svg" alt="Python 3.10 or newer"></a>
+  </p>
 
-**A safety and verification layer for AI agents before they use tools, change systems, or claim success.**
+  <p>
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#use-cases">Use cases</a> ·
+    <a href="docs/integrations.md">Integrate another agent</a> ·
+    <a href="#frequently-asked-questions">FAQ</a>
+  </p>
+</div>
 
-Jev Decisions gives an agent a disciplined pause. Before an external action, it asks: *Should this happen, does it need human approval, and what proof will show that it worked?* After the action, it checks the result instead of trusting a confident message.
+Jev Decisions is an **AI agent safety and verification layer**. It sits between an agent's plan and its external effect, then checks the result after the action. It helps agents use tools carefully, request human approval when needed, and stop claiming success before the evidence is in.
 
-It ships as a **Hermes plugin** and as a **standalone Python and command line package** for other AI agents, automation scripts, MCP servers, and agent frameworks.
+Use it as a **Hermes plugin** or as a small **Python and command line package** behind another AI agent, MCP server, automation script, or workflow runner.
 
-## Why this exists
+> **The short version:** Jev Decisions does not take control away from your agent. It gives the agent a clear safety boundary before action and a proof boundary after action.
 
-An AI agent can choose the wrong tool, act with too much authority, or report success when nothing changed. Those failures are ordinary. They come from a missing boundary between intention and action.
+## Why Jev Decisions exists
 
-Jev Decisions puts that boundary in code.
+An agent can choose the wrong tool. It can act with more authority than the task allows. It can receive a `success` response from a tool and report a finished job even though the target never changed.
 
-It helps an agent:
+Those are not exotic failures. They are what happens when planning, permission, execution, and verification blur together.
 
-- pause before deleting, sending, changing, buying, publishing, or restarting;
-- ask a person before a destructive, sensitive, or hard to reverse action;
-- separate a suggestion from permission to act;
-- read the exact target back after a change;
-- distinguish direct evidence from a claim, guess, or stale result;
-- review an answer for grounding, completeness, and a concrete next step;
-- keep structured records without storing raw conversations by default.
+Jev Decisions separates them.
 
-The host agent still owns credentials, permissions, tool execution, retries, and human approval. Jev Decisions supplies the safety check and the proof check.
+| Before an action | After an action |
+| --- | --- |
+| Is this read only or externally consequential? | Did the exact target change? |
+| Is it reversible? | Is the result supported by direct evidence? |
+| Does a person need to approve it? | Should the agent finish, read back, inspect, retry, or ask? |
 
-## The use case in one minute
+The host agent still owns credentials, permissions, tool execution, retries, and the final approval flow. Jev Decisions makes the judgment explicit and gives the host a structured answer.
 
-```text
-Agent receives a task
-        |
-        v
-Jev reviews the proposed action
-        |
-        +--> observe: read only, no outside change
-        +--> suggest: reversible action may be proposed
-        +--> human: approval is required
-        |
-Agent acts under its own authority
-        |
-Jev checks the exact result
-        |
-        +--> done: direct proof is present
-        +--> read_back: inspect the target again
-        +--> inspect_evidence: check logs or another source
+## The product in one picture
+
+```mermaid
+flowchart LR
+    A[Agent receives a task] --> B[Build a small bounded state]
+    B --> C{Jev action check}
+    C -->|observe| D[Read only work]
+    C -->|suggest| E[Reversible action may be proposed]
+    C -->|human| F[Ask for approval]
+    E --> G[Host agent executes]
+    F --> G
+    G --> H{Jev verification check}
+    H -->|done| I[Record completion]
+    H -->|read_back| J[Inspect exact target]
+    H -->|inspect_evidence| K[Check logs or direct proof]
 ```
 
-Example: an agent wants to delete an old backup. Jev Decisions can classify the action as destructive and external, require human approval, and then require a direct check if the deletion is approved. The agent remains in control. The safety decision becomes visible and testable.
+Example: an agent wants to delete an old backup. Jev Decisions can classify the action as destructive and external, require human approval, and require a direct check after the approved deletion. The agent remains in charge. The safety decision becomes visible, testable, and auditable.
 
 ## What you get
 
@@ -57,7 +64,7 @@ Example: an agent wants to delete an old backup. Jev Decisions can classify the 
 
 Install the repository as a Hermes plugin and receive five tools plus three advisory hooks:
 
-| Capability | Plain English purpose |
+| Tool | Plain English purpose |
 | --- | --- |
 | `jev_decide` | Ask a bounded yes or no question, choose an option, or give a score. |
 | `jev_workflow` | Run a prepared review for a common agent situation. |
@@ -73,7 +80,7 @@ Install the repository as a Hermes plugin and receive five tools plus three advi
 
 The hooks observe recommendations. They do not secretly execute, rewrite, approve, or deny an action.
 
-### A provider independent gateway
+### A small gateway for any agent
 
 The local gateway works without a network request. Any agent that can call Python or a command can use it.
 
@@ -101,7 +108,9 @@ assert result["verified"] is True
 
 The same boundary can sit behind a Python agent, shell script, MCP tool, HTTP service, workflow runner, or another agent framework. Only the plugin registration layer is specific to Hermes.
 
-## Install in Hermes
+## Quick start
+
+### Install in Hermes
 
 Clone the product into the Hermes plugin directory:
 
@@ -113,7 +122,7 @@ hermes plugins enable jev-decisions
 hermes plugins doctor jev-decisions
 ```
 
-Restart Hermes after installing or changing the plugin. The plugin uses the active Hermes secret scope for its provider key. Keep keys outside the repository.
+Restart Hermes after installing or changing the plugin. Keep provider keys outside the repository, in the active Hermes secret scope or your environment:
 
 ```bash
 export OPENROUTER_API_KEY="your-key"
@@ -126,9 +135,9 @@ Endpoint: https://openrouter.ai/api/alpha/decisions
 Model:    typesafe/jev-1.13
 ```
 
-## Install for another AI agent
+### Install for another AI agent
 
-Jev Decisions is also a small Python package. Install it from a clone in an isolated environment:
+Jev Decisions can run as a local Python package behind another agent:
 
 ```bash
 git clone https://github.com/bojansandhaus/jev-decisions.git
@@ -139,14 +148,14 @@ python3 -m venv .venv
 python3 -m pip install .
 ```
 
-The command line gateway accepts JSON and returns JSON, which makes it useful from an agent runner or service wrapper:
+Ask whether an action should need a person:
 
 ```bash
 echo '{"action":"delete_backup","external":true}' \
   | jev-gateway decide
 ```
 
-A typical result asks for a person before the action proceeds:
+A typical result is structured data the host agent can enforce:
 
 ```json
 {
@@ -159,34 +168,34 @@ A typical result asks for a person before the action proceeds:
 }
 ```
 
-After an action, check the result:
+Then check whether the action is actually proven:
 
 ```bash
 echo '{"changed":true,"read_back":false,"evidence":false}' \
   | jev-gateway verify
 ```
 
-The answer will direct the host agent to read the exact target back before calling the task complete.
+The host agent receives a `read_back` recommendation instead of permission to claim completion.
 
 See [docs/integrations.md](docs/integrations.md) for Python, shell, service, MCP, and framework integrations.
 
-## Common use cases
+## Use cases
 
-### Safer tool calls
+### Safer tool use
 
 Review a planned change to a file, server, database, device, online record, or service before the tool runs. Destructive, credential related, or difficult to reverse work can require a person.
 
-### Action verification
-
-A tool can return the word `success` while the requested change failed, reached the wrong target, or never happened. Jev Decisions makes read back and direct evidence part of the completion path.
-
 ### Human approval for AI agents
 
-Keep the approval boundary clear. Jev Decisions recommends when a human should decide. Your host agent remains responsible for presenting the request and enforcing the answer.
+Keep the approval boundary clear. Jev Decisions recommends when a human should decide. Your host agent presents the request and enforces the answer.
+
+### Action verification
+
+A tool can return `success` while the requested change failed, reached the wrong target, or never happened. Jev Decisions makes read back and direct evidence part of the completion path.
 
 ### Better agent answers
 
-Review whether a draft uses the supplied evidence, answers the full request, avoids invented claims, and gives a specific next step when one is needed.
+Review whether a draft uses the supplied evidence, answers every requested part, avoids invented claims, and gives a specific next step when one is needed.
 
 ### Memory review
 
@@ -223,7 +232,8 @@ The Hermes plugin includes 25 reusable reviews:
 
 These reviews take bounded information. They do not require a separate connector for every service.
 
-## Typed questions
+<details>
+<summary><strong>See a typed Jev question</strong></summary>
 
 A Jev question has a type, clear instructions, and definitions for the possible answers.
 
@@ -265,6 +275,8 @@ The three question types are:
 
 The answer is structured data. Your agent decides what to do with it.
 
+</details>
+
 ## Safety rules
 
 The local gateway returns one of three action recommendations:
@@ -297,22 +309,11 @@ Read [SECURITY.md](SECURITY.md) for the complete security policy.
 
 ## Why this is a good product
 
-Jev Decisions earns its place at the narrowest point in an agent system: the moment before intent becomes an external effect, and the moment after the agent claims that the effect happened.
+Jev Decisions works at the narrowest point in an agent system: the moment before intent becomes an external effect, and the moment after an agent claims that the effect happened.
 
 It stays small. It keeps execution with the host. It makes approval visible. It turns verification into a concrete operation instead of a promise. It can start in advisory mode, gather structured outcomes, and become stricter only where your own evidence supports that choice.
 
 That gives you a practical path to safer AI agents without replacing the framework you already use.
-
-## Development
-
-```bash
-python3 -m pip install -e '.[test]'
-python3 -m pytest -q
-python3 -m compileall -q .
-python3 tools/public_scan.py
-```
-
-The test suite makes no network request. A live provider test is optional and must use a key outside the repository.
 
 ## Frequently asked questions
 
@@ -348,6 +349,17 @@ The default Hermes adapter uses OpenRouter's Decisions API with `typesafe/jev-1.
 
 The repository is available under the MIT License. Provider charges, if any, depend on the provider and model you choose.
 
+## Development
+
+```bash
+python3 -m pip install -e '.[test]'
+python3 -m pytest -q
+python3 -m compileall -q .
+python3 tools/public_scan.py
+```
+
+The test suite makes no network request. A live provider test is optional and must use a key outside the repository.
+
 ## Repository layout
 
 ```text
@@ -360,7 +372,6 @@ jev-decisions/
 ├── jev_gateway.py    JSON command line gateway
 ├── shadow_report.py  Review and calibration report
 ├── plugin.yaml       Hermes manifest
-├── runtime.py        Hermes and standalone runtime bridge
 ├── tools/            Public safety scanner
 ├── tests/            Generic tests
 ├── docs/             Integration guidance
