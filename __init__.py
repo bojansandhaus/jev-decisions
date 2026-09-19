@@ -585,7 +585,7 @@ JEV_LOOP_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["record_decision", "record_observation", "record_outcome", "assess", "list"]},
+            "action": {"type": "string", "enum": ["record_decision", "record_observation", "record_outcome", "label_outcome", "reopen", "assess", "list"]},
             "decision_id": {"type": "string"},
             "question": {"type": "string"},
             "chosen": {"type": "string"},
