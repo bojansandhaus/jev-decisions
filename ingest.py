@@ -9,6 +9,7 @@ except ImportError:
     from fabric import close_case, open_case
 
 _ACTIVE_CASES: dict[str, str] = {}
+_ACTIVE_INVOCATIONS: dict[str, str] = {}
 
 
 def _domain(source: str, event_type: str, payload: dict[str, Any]) -> str:
