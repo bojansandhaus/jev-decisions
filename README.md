@@ -1,43 +1,63 @@
 <div align="center">
   <h1>Jev Decisions Plugin for Hermes (and other AI Agents)</h1>
-  <p><strong>Give your agent a second opinion before action, and a reason to check its work.</strong></p>
-  <p>Tool risk reviews, human approval recommendations, evidence checks, and a decision journal.</p>
+  <p><strong>Help Hermes check its plans and its work.</strong></p>
+  <p>Review a risky change, catch an unsupported claim, or check what still needs doing.</p>
   <p>
     <a href="https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml"><img src="https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml/badge.svg" alt="Jev Decisions CI status"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License"></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB.svg" alt="Python 3.10 or newer"></a>
   </p>
   <p>
-    <a href="#quick-start">Install</a> ·
-    <a href="#your-first-useful-check">Try a check</a> ·
-    <a href="#what-you-can-use-it-for">Use cases</a> ·
-    <a href="docs/integrations.md">Integration guide</a> ·
-    <a href="#frequently-asked-questions">FAQ</a>
+    <a href="#install-in-hermes">Install</a> ·
+    <a href="#try-it-in-a-conversation">Try it</a> ·
+    <a href="#what-is-jev">About the model</a> ·
+    <a href="#frequently-asked-questions">FAQ</a> ·
+    <a href="docs/reference.md">Technical reference</a>
   </p>
 </div>
 
-**Jev Decisions Plugin for Hermes (and other AI Agents)** adds structured decision reviews to AI agent workflows. Use it to examine a proposed tool call, flag missing evidence, recommend human approval, and record what happened after a decision. Hermes gets native tools and advisory hooks. Other agents can call the local Python gateway or JSON command line interface.
+**Jev Decisions Plugin for Hermes (and other AI Agents)** gives Hermes extra tools for reviewing a plan, checking an answer against its sources, and assessing whether a task is really finished. You can ask for a review in a normal conversation. Your usual model continues to do the work.
 
-A tool returning `success` tells you that a call completed. It may tell you nothing about whether the right document changed, the message reached its recipient, or the restored backup works. Jev gives those questions a place in the workflow before the agent announces that the job is done.
+Suppose Hermes updates a document and tells you it is done. Did it open the saved document and check the change, or just receive a successful response from the editing tool? This plugin helps make that distinction explicit. Hermes still needs to gather the evidence.
+
+It is useful when you trust Hermes to work independently but want closer checks around file changes, messages, research, and other tasks where a confident mistake would matter.
 
 > [!IMPORTANT]
-> Jev reviews and recommends. It does not execute your actions, block every unsafe command, grant permission, or read remote targets on its own. Your agent must enforce approval rules, collect evidence, and pass accurate state to the gateway. Hermes hooks run in advisory mode.
+> Reviews are advice. Installing this plugin does not automatically stop dangerous commands or replace your approval settings. Automatic reviews are off by default; begin by asking for specific checks.
 
-## What you get
+## What you can ask it to check
 
-- **A second opinion at the point of action.** Review risk, authority, reversibility, and the evidence an operation should leave behind.
-- **Local policy checks without an API call.** Get a structured `observe`, `suggest`, or `human` recommendation from Python or the CLI.
-- **Evidence checks before completion.** Using evidence supplied by the host, distinguish a claim of success from a result supported by a target readback.
-- **Prepared reviews for recurring work.** Check drafts, plans, memory candidates, research claims, purchases, and communications with named workflows.
-- **A local record beyond the current chat.** Link decisions to observations and outcomes; inspect the record before changing how an agent behaves. You control its retention and access.
+<table>
+<tr><th>When you are using Hermes to...</th><th>Ask Jev to review...</th></tr>
+<tr><td>Change a file or restart a service</td><td>Whether the plan includes permission, a way to recover, and a check afterward.</td></tr>
+<tr><td>Research a question or write a report</td><td>Whether the supplied sources support the claims and whether anything important is missing.</td></tr>
+<tr><td>Draft a message</td><td>Whether it is ready to send, contains sensitive information, or makes an unintended commitment.</td></tr>
+<tr><td>Save something to memory</td><td>Whether the proposed memory is useful later, sensitive, or in conflict with an existing fact.</td></tr>
+<tr><td>Compare purchases or choose a next step</td><td>Whether the choice fits your requirements and what information is still missing.</td></tr>
+<tr><td>Follow up on a decision</td><td>What happened afterward, using a local record of observations and outcomes.</td></tr>
+</table>
 
-Keep your existing agent, tools, and permission system. Add a review where an error would matter.
+The plugin includes 25 prepared reviews. You do not need to learn their formats to try them: ask Hermes to use the appropriate Jev review and explain the result. See the [full review catalog](docs/reference.md#prepared-review-catalog) when you want a particular check.
 
-## Quick start
+## What is Jev?
 
-### Install the Hermes plugin
+[Jev 1.13](https://openrouter.ai/typesafe/jev-1.13) is a decision model made by **TypeSafe**. It reads the information supplied to it and answers focused questions: how likely something is to be true, which option fits, or how something scores against a set of criteria. It returns those answers with numbers that express uncertainty. It does not write chat replies or explanations.
 
-You need Python 3.10 or newer, Git, and a Hermes installation with plugin support. These commands use the default Hermes profile:
+This plugin connects those reviews to Hermes through OpenRouter. Hermes can interpret the returned answers for you; it should not present its explanation as reasoning supplied by Jev. You keep the main model you already use.
+
+The plugin also includes simple local rules for checking whether an action needs approval and whether Hermes has supplied evidence of a completed change. Those checks work without a model request.
+
+Read more from the sources:
+
+- **[Jev 1.13 on OpenRouter](https://openrouter.ai/typesafe/jev-1.13):** model details, current pricing, and provider information.
+- **[TypeSafe introduces Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev):** the creator's explanation of the model and why it was built.
+- **[TypeSafe's guide to System One models](https://docs.typesafe.ai/concepts/system-one.md):** how these focused decisions differ from a chat model's replies, including what confidence can and cannot tell you.
+
+This is an independent, community maintained plugin by Bojan Sandhaus. Jev is TypeSafe's model; OpenRouter provides the API used here. This repository is not an official release from either company.
+
+## Install in Hermes
+
+You need Git, Python 3.10 or newer, and a Hermes installation with plugin support. In a terminal, run:
 
 ```bash
 git clone https://github.com/bojansandhaus/jev-decisions.git \
@@ -48,374 +68,103 @@ hermes tools enable jev
 hermes plugins doctor jev-decisions
 ```
 
-The tool enablement command above targets the CLI by default. For a messaging platform, enable `jev` for that platform using the platform option shown by `hermes tools enable` help. For a named profile, install into that profile's plugin directory and run the commands with that profile selected. Do not clone over an existing installation. See [updating](#update-or-disable-the-plugin) below.
+These commands target the default Hermes profile and enable the tools for the CLI. If you use a named profile or a messaging platform, use that profile's plugin directory and tool settings. If the plugin is already installed, follow [the update instructions](#update-or-disable) instead of cloning over it.
 
-The doctor checks discovery, import, and registration. Start a fresh Hermes session to load the plugin. Restart the relevant long running Hermes process if you use a gateway or desktop backend.
+The doctor should report successful discovery and registration of six tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
-**Automatic hooks are off by default.** The six tools remain available for explicit calls. To opt into lifecycle reviews, start Hermes with `JEV_ENABLE_HOOKS=1` in its environment. For a terminal session:
+**For Jev model reviews, make `OPENROUTER_API_KEY` available to the Hermes process** through your normal secret manager or environment settings. The plugin uses the OpenRouter key already configured there. Do not paste a key into chat or save it in this repository. You can check current usage pricing on [OpenRouter's Jev page](https://openrouter.ai/typesafe/jev-1.13).
+
+Start a fresh Hermes process after installation. For the desktop app or a gateway, restart the backend that runs your sessions. Opening another conversation in an unchanged backend may not load new plugin code.
+
+## Try it in a conversation
+
+Start with a harmless example. Paste this into Hermes:
+
+> Use Jev's `plan_review` to review this plan: edit a test document, save it, and tell me the job is done. Identify anything missing from the plan. Only review it; do not edit any files.
+
+Hermes should call `jev_workflow` and explain the returned assessment. Jev may flag missing recovery or verification steps, but its answer is a judgment, not a guaranteed diagnosis.
+
+For a check that needs **no OpenRouter key**, try:
+
+> Use `jev_gateway` to check whether deleting a backup needs human approval. Set the action to `delete_backup`, external to true, reversible to false, destructive to true, and credential to false. Do not delete anything.
+
+The local rule should return `human`, meaning approval is required. Nothing is deleted by this check.
+
+For everyday work, make the review part of your request:
+
+> Draft the email, then use Jev's `communication_review` to check the recipient, sensitive details, and commitments before showing it to me. Do not send it.
+
+> Before calling the document update complete, read the saved document and use Jev's `action_verify` to review whether the result matches what I asked for.
+
+Hermes chooses and calls the tools. If it answers without using them, ask it to make the Jev tool call explicitly. A missing key or failed request means the review did not happen.
+
+## Optional automatic reviews
+
+Once explicit checks are useful, you can enable reviews before tool calls, after tool results, and after model responses. Start a CLI session with:
 
 ```bash
 JEV_ENABLE_HOOKS=1 hermes
 ```
 
-For a service or desktop backend, set the variable in that process's environment and restart it. Enabling hooks permits automatic model requests containing bounded context and creates local review records. Read the privacy section before opting in.
+For a desktop backend or service, set `JEV_ENABLE_HOOKS=1` in that process's environment and restart it. The OpenRouter key must also be available to that process for model reviews.
 
-**The local gateway needs no provider key.** Model based reviews through `jev_decide` and `jev_workflow` need `OPENROUTER_API_KEY` in the active Hermes secret scope or the environment of the process running Hermes. Set it through your normal secret manager; do not paste keys into chat or commit them to this repository.
+Automatic reviews create local records. They do **not** insert a warning into every conversation, rewrite answers, or stop commands. Their records are useful for inspecting agent behavior; ask for an explicit review when you want a result discussed in the chat.
 
-The adapter's default model is `typesafe/jev-1.13`, using OpenRouter's Decisions API at `https://openrouter.ai/api/alpha/decisions`. Your main chat model can remain unchanged. Explicit `jev_decide` and `jev_workflow` calls accept a `model` override. The Decisions endpoint is an alpha API: pin the version you deploy and retest provider compatibility before an upgrade.
+Enabling them can send excerpts of requests, answers, and tool activity to OpenRouter, add delay, and incur charges. Start with non-sensitive tasks. To switch them off, unset the variable or set it to `0`, then restart Hermes.
 
-### Install the standalone Python and CLI gateway
+## Privacy and limits
 
-Use a separate virtual environment:
+**Reviews see what Hermes supplies.** Jev cannot check a document it has not been shown or confirm a delivery without evidence from the sending system. A high confidence score can still accompany a wrong answer.
 
-```bash
-git clone https://github.com/bojansandhaus/jev-decisions.git
-cd jev-decisions
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install .
-```
+**Model reviews leave your machine.** The relevant text goes to OpenRouter and its model provider. The local rule checks do not make those requests. Redaction reduces some exposure but cannot guarantee that private information has been removed.
 
-On Windows PowerShell, activate the environment with `.venv\Scripts\Activate.ps1` instead. The examples below use a POSIX shell.
+**Records stay on disk until you manage them.** Automatic tool records omit raw arguments and results in favor of hashes, lengths, and review information. Manual journal entries save the text and evidence supplied to them. Protect the records and decide how long to retain them; disabling the plugin does not delete them.
 
-Standalone installation provides the local gateway, CLI, and supporting Python modules. Hermes loads its registration layer separately; deployment specific collectors are not included.
+**A failed review grants no permission.** If a provider request fails, Hermes must still follow its existing approval rules. Automatic reviews do not lock execution while a provider is unavailable.
 
-This installs the `jev-gateway` command. It evaluates JSON supplied by your runner; it does not launch another agent or connect to your services. There is no need to configure OpenRouter for local `decide` and `verify` calls.
-
-## Your first useful check
-
-### In Hermes: review a proposed deletion
-
-Ask your agent:
-
-> Use `jev_gateway` with action `decide`. The state is action `delete_backup`, external `true`, reversible `false`, destructive `true`, and credential `false`. Return the policy decision. Do not delete anything.
-
-This is a local rule check. It should return `human`. That means your agent should ask for approval through its own permission flow, not treat the review itself as approval.
-
-For a model based review, give the agent a small, synthetic case:
-
-> Use `jev_workflow` with workflow `plan_review`. Review a plan to update a test document: save the original, apply the approved change, read the document back, compare it with the requested text, and restore the original if verification fails. Only review the plan.
-
-Successful workflow responses include structured answers and `shadow: true`. An error response does not contain a completed review. The workflow does not run the plan.
-
-### In the terminal: check policy, then evidence
-
-```bash
-printf '%s\n' '{"action":"delete_backup","external":true,"reversible":false,"destructive":true,"credential":false}' | jev-gateway decide
-```
-
-Inspect the `decision` field. A destructive operation requires `human` regardless of a model's opinion.
-
-Now describe a changed target that has not been checked:
-
-```bash
-printf '%s\n' '{"changed":true,"read_back":false,"evidence":false}' | jev-gateway verify
-```
-
-The verification result should contain `"verified": false` and `"next": "read_back"`. Missing or non-boolean change evidence returns `establish_change`; a readback without evidence returns `inspect_evidence`. The gateway requires all three proof fields to be the boolean `true` before returning `done`.
-
-After your agent actually reads the exact target and confirms the requested result, it can submit:
-
-```bash
-printf '%s\n' '{"changed":true,"read_back":true,"evidence":true}' | jev-gateway verify
-```
-
-The result should contain `"verified": true` and `"next": "done"`. These inputs are deliberately simple fixtures. In a real integration, derive them from observed results. Setting them to `true` without checking anything defeats the purpose.
-
-## How the pieces fit
-
-There are two kinds of review, with different jobs.
-
-**Model based judgment** examines bounded context. Is the plan missing a recovery step? Does the draft overstate the evidence? Should a message wait for clarification? Jev answers typed questions through OpenRouter.
-
-**Local policy and verification** apply Python rules to explicit state. They run without a network request and return data the host agent can act on. They do not independently know whether an API call succeeded.
-
-<pre>
-Proposed task
-    ↓
-Bounded context and explicit risk flags
-    ↓
-Model review, local policy, or both
-    ↓
-Host checks its authority and requests approval if needed
-    ↓
-Host performs the approved operation
-    ↓
-Host reads the target and gathers evidence
-    ↓
-Verification result and recorded outcome
-</pre>
-
-An advisory hook observes this process. An enforced integration deliberately places the local gateway in the execution path. Installing the plugin alone does not convert every recommendation into a blocking rule.
-
-## What you can use it for
-
-### Review tool calls before they change something
-
-Give the review a proposed command, its target, expected effect, and recovery plan. Use `command_review` or `infrastructure_review` to identify what needs approval and what must be checked afterward. Keep execution in the host's existing permission system.
-
-**Example:** before restarting a service, establish how to confirm recovery and what to do if it stays unavailable.
-
-### Catch unsupported completion claims
-
-Use `tool_result_verify` or `action_verify` with the requested result and the evidence you gathered. Use the local gateway for explicit readback checks.
-
-**Example:** after updating an online record, retrieve that record by its exact ID and compare its fields with the requested change. A successful HTTP response alone may not settle the question.
-
-### Check an answer before sending it
-
-Use `output_review` with the request, draft, and relevant evidence. It reviews grounding, completeness, actionability, and whether the answer keeps reopening a settled decision.
-
-**Example:** catch a report that describes work as complete while one requested deliverable is still missing. The host decides whether to revise the answer.
-
-### Review memory without handing over the memory store
-
-Use `memory_gate` or `memory_review` with a candidate fact and the relevant existing entries. Review usefulness, sensitivity, and conflicts before your agent writes memory.
-
-**Example:** distinguish a lasting preference from a passing remark. Jev does not delete, merge, or retain memories on its own.
-
-### Check research, purchases, and messages
-
-Use `evidence_review` to separate direct support from inference. Use `purchase_review` to test a choice against budget and requirements. Use `communication_review` to inspect a recipient, commitment, and draft before sending.
-
-**Example:** a purchase can fit the requirements while its price or availability remains unverified. The review makes that gap explicit without placing the order.
-
-### Follow decisions through to outcomes
-
-Use `jev_loop` to record a choice, attach later observations, and record an outcome. Inspect the history before deciding whether a recurring rule deserves more trust.
-
-**Example:** track whether a maintenance recommendation resolved the original symptom. Record unknown outcomes as unknown. A model's confidence is not ground truth, and journal statistics are not a safety certification.
-
-## Hermes tools and hooks
-
-The plugin exposes six tools under the `jev` toolset.
-
-<table>
-<tr><th>Tool</th><th>Use it for</th><th>Provider required?</th></tr>
-<tr><td><code>jev_decide</code></td><td>Custom typed questions against bounded state.</td><td>Yes</td></tr>
-<tr><td><code>jev_workflow</code></td><td>A prepared review such as <code>plan_review</code> or <code>output_review</code>.</td><td>Yes</td></tr>
-<tr><td><code>jev_gateway</code></td><td>Local action policy, verification, domain classification, and ledger snapshot.</td><td>No</td></tr>
-<tr><td><code>jev_ingest</code></td><td>Open a rule classified case from supplied event data.</td><td>No</td></tr>
-<tr><td><code>jev_ledger</code></td><td>Record reviews, labeled outcomes, commitments, and decisions; inspect metrics.</td><td>No</td></tr>
-<tr><td><code>jev_loop</code></td><td>Link decisions, observations, and outcomes; assess the resulting history.</td><td>No</td></tr>
-</table>
-
-Three optional hooks observe the agent lifecycle when `JEV_ENABLE_HOOKS` is enabled:
-
-- `pre_tool_call` reviews proposed tool use.
-- `post_tool_call` reviews the returned result.
-- `post_llm_call` reviews the answer against the supplied request and context.
-
-Optional platform event handlers can also record event metadata for Home Assistant, email, Telegram, Discord, Matrix, and DingTalk when the host exposes the required adapter API. They do not send messages or control those services. This is an integration surface, not a guarantee that every platform version has been tested.
-
-Hooks return no approval, replacement answer, or execution instruction. They may record local review data. Model reviews can add provider requests and latency when enabled; see the configuration and privacy details in [the integration guide](docs/integrations.md).
-
-## Prepared review catalog
-
-The plugin includes 25 named workflows. Supply only the context each question needs.
-
-<details>
-<summary><strong>Goals, plans, and answers</strong></summary>
-
-- `goal_judge`: assess task completion, blockers, and result quality.
-- `plan_review`: check the outcome, prerequisites, and recovery path.
-- `output_review`: check grounding, coverage, actionability, and remaining risk.
-- `next_action`: choose a concrete next step or identify a blocking question.
-- `decision_circling`: identify repeated analysis that no longer advances a choice.
-
-</details>
-
-<details>
-<summary><strong>Actions, authority, and verification</strong></summary>
-
-- `command_review`: assess risk and recommend allowing, asking, or denying.
-- `action_verify`: assess whether supplied evidence supports completion.
-- `tool_result_verify`: review tool output and the required followup.
-- `verification_depth`: choose the amount of checking an action deserves.
-- `escalation`: identify uncertainty about intent, permission, risk, or evidence.
-
-</details>
-
-<details>
-<summary><strong>Memory and evidence</strong></summary>
-
-- `memory_gate`: review durability, type, and sensitivity.
-- `memory_review`: review usefulness, type, and conflicts.
-- `memory_maintenance`: recommend keeping, merging, refreshing, quarantining, or discarding.
-- `recall_rerank`: review relevance and conflicts in a candidate memory set.
-- `claim_status`: classify a claim as observed, inferred, assumed, unverified, or contradicted.
-- `evidence_review`: assess source support, citation needs, and uncertainty.
-
-</details>
-
-<details>
-<summary><strong>Choices, operations, and communication</strong></summary>
-
-- `agent_referee`: compare supplied candidate outputs.
-- `option_select`: compare labeled options against an objective.
-- `purchase_review`: assess fit, evidence, and the next purchasing step.
-- `anomaly_review`: identify unusual behavior and its severity.
-- `daily_anomaly`: review a deviation from a supplied baseline.
-- `infrastructure_review`: assess operational risk, backup, and verification.
-- `document_quality`: review duplication, metadata, and extracted facts.
-- `communication_review`: review readiness to send, commitments, and sensitive content.
-- `promotion_review`: review whether evidence supports a narrower, stricter integration.
-
-</details>
-
-These are review definitions, not independent service connectors. For example, `document_quality` evaluates what you provide; it does not retrieve your document archive. Option selection and agent comparison use the labels defined by their questions. Use `jev_decide` when you need a different choice set.
-
-## Custom questions
-
-Use `jev_decide` when the prepared workflows do not fit. Each question needs a type, instructions, and criteria that define the possible answers.
-
-- **Boolean (`noul`)** is Jev's true or false question type.
-- **Choice** selects from named alternatives.
-- **Score** evaluates against an ordered list of criteria.
-
-Example tool arguments:
-
-```json
-{
-  "state": {
-    "task": "Update a test document",
-    "backup_exists": true,
-    "readback_planned": false
-  },
-  "questions": {
-    "ready": {
-      "type": "noul",
-      "instructions": "Does the plan include a direct check of the edited document?",
-      "criteria": {
-        "true": "The plan includes reading and comparing the edited document",
-        "false": "The plan lacks a direct comparison after editing"
-      }
-    },
-    "next": {
-      "type": "choice",
-      "instructions": "What should the host do before executing this plan?",
-      "criteria": {
-        "proceed": "The plan covers recovery and verification",
-        "revise": "Add the missing verification step",
-        "ask": "Clarify a missing permission"
-      }
-    }
-  }
-}
-```
-
-Returned probabilities and confidence describe the model's judgment. They do not prove that a statement is true or that an action is authorized. Keep questions specific enough that a later observation can confirm or contradict them.
-
-## Integrate another AI agent
-
-Call the local gateway before a consequential operation. Branch on its result, apply your own approval rules, execute through your host, and verify using observations from the target.
-
-```python
-from gateway import decide, verify
-
-policy = decide({
-    "action": "restart_service",
-    "external": True,
-    "reversible": True,
-    "destructive": False,
-    "credential": False,
-})
-
-# A recommendation is not permission to execute.
-assert policy["decision"] == "suggest"
-
-# Your host checks authority and performs the approved action.
-# This fixture represents a result that still needs a target readback.
-check = verify({
-    "changed": True,
-    "read_back": False,
-    "evidence": False,
-})
-assert check["verified"] is False
-assert check["next"] == "read_back"
-```
-
-The Python functions and CLI can sit behind an MCP tool or HTTP service you build. This repository does not ship a universal MCP server or native adapters for every agent framework. The Hermes registration code stays specific to Hermes; your own provider can supply semantic judgment while the local gateway handles explicit policy state.
-
-See [the integration guide](docs/integrations.md) for the interface contract and operational details.
-
-## Privacy, storage, and failure behavior
-
-### What leaves the machine?
-
-Local gateway checks do not contact a model provider. Model based tools send the state you supply to OpenRouter. Automatic model reviews, when enabled, can include excerpts of the user request, draft answer, conversation context, tool arguments, or tool result.
-
-Treat redaction as a precaution, not a guarantee of anonymity. Send synthetic examples first. Strip personal content and credentials before supplying context. Provider retention and billing follow the provider's terms.
-
-### What stays on disk?
-
-Jev uses local JSONL files under the runtime home. Hermes supplies its active home; standalone use falls back to `JEV_HOME` or `~/.jev`.
-
-- `logs/jev-shadow.jsonl`: automatic review metadata and model answers.
-- `logs/jev-ledger.jsonl`: review records, outcomes, commitments, decisions, and case events.
-- `logs/jev-closed-loop.jsonl`: decision, observation, and outcome records.
-
-Manual journal and ledger entries can contain the text and evidence you submit. Do not assume that every local record is metadata only. Protect the directory, choose a retention policy, and exclude it from public repositories. See [SECURITY.md](SECURITY.md).
-
-### What if a model review fails?
-
-A missing key, timeout, rejected request, or malformed response can prevent a review. A failed review supplies no approval. Advisory hooks do not turn provider availability into a global execution lock; the host's existing approval and error handling remain responsible for what happens next.
-
-Local policy and verification remain available without OpenRouter. If a required review is unavailable in your own enforced integration, stop or ask rather than quietly bypassing it.
+The [security guide](SECURITY.md) and [integration guide](docs/integrations.md) explain these boundaries. For this early release, test unfamiliar workflows with harmless examples before using them around consequential work. CI checks the code and installation; it does not certify every model judgment or integration.
 
 ## Frequently asked questions
 
-### Will installing this stop dangerous commands automatically?
+### Do I need to replace the model I use with Hermes?
 
-No. The Hermes hooks are advisory. They do not replace Hermes command approval or intercept every route to execution. To enforce a policy, place the gateway in your host's execution path and stop the operation when the decision requires approval. A model recommendation must never grant authority the host lacks.
+No. Your usual model continues the conversation and performs the task. The plugin calls Jev separately when you request a model review or enable automatic reviews.
 
-### Do I need to change my main model or buy another subscription?
+### Is there a subscription or extra charge?
 
-You can keep your main model. The model based tools use the configured OpenRouter key and the configured Jev model. Provider calls may incur usage charges; the local Python gateway and CLI do not require a subscription or API key. The source code is MIT licensed.
+The plugin is MIT licensed. Jev requests through OpenRouter may incur usage charges under your account. See [current model pricing](https://openrouter.ai/typesafe/jev-1.13). Local rule checks and local records need no paid provider request.
 
-### Can I keep all checks offline?
+### Why use this instead of asking Hermes to double-check itself?
 
-Local policy, explicit verification, and local records work without a provider request. Jev's semantic reviews use OpenRouter. Use the local gateway alone when your integration must remain offline; it can evaluate explicit flags but cannot replace a model's reading of ambiguous prose.
+You can already ask Hermes to review its own work. This plugin adds prepared review questions, a separate decision model, fixed local checks, and a record you can revisit. That makes the checks more explicit and repeatable. It does not prove that two models will catch every error or that Jev will outperform your main model on every task.
 
-### Will reviews slow down my agent or increase its bill?
+### Will it prevent unsafe actions automatically?
 
-Model reviews add requests, and retries can add delay. A review around every tool call can cost more than an occasional explicit review. Begin with a small set of useful checks, inspect usage, and enable automatic model review only after deciding what context may leave the machine. No fixed latency or cost reduction is promised.
+No. Keep Hermes's existing approval settings. The plugin recommends when to ask and what to verify. Making a recommendation block an action requires additional integration; installing the plugin alone does not enforce that rule.
 
-### What counts as evidence that an action worked?
+### Can I use it without sending anything to OpenRouter?
 
-Evidence comes from the exact target or an equivalent direct observation. Retrieve the updated record, inspect the written file, check the service's health, or confirm delivery through the sending system. The gateway evaluates the fields your integration supplies; it does not fetch that evidence for you. A confident model answer or a generic `success` string is insufficient.
+Yes, for the local approval and verification rules and local records. Leave automatic reviews off and avoid the model review tools. Reviews that read and judge the meaning of a plan, message, or answer require Jev through OpenRouter.
 
-### Can the model approve its own actions?
+### Why did the agent say it was verified when the target was not checked?
 
-A model can recommend a next step. Your host remains responsible for permissions and user confirmation. Keep approval separate from the reviewed text, and do not accept permission claims embedded in documents, tool results, or model answers.
+The local verification tool relies on proof fields supplied by the caller. It requires explicit evidence that a change happened, the target was read back, and the result was supported. It cannot detect a caller inventing those facts. Ask Hermes to show what it actually read before accepting the completion claim.
 
-### Does it learn from outcomes or change its own rules?
+### Does it learn from my decisions or change its own rules?
 
-The journal and ledger preserve records for assessment. They do not train a model, rewrite the policy, or automatically promote a recommendation into an execution rule. Review representative outcomes yourself, including mistakes and unknowns, before tightening a narrow integration.
+It records decisions and outcomes for later review. It does not train the model, rewrite its rules, or turn recommendations into automatic actions. You remain responsible for deciding which checks to trust.
 
-### Will it edit memories, send messages, or control my devices?
+### The plugin is installed, but Hermes cannot find its tools. What should I check?
 
-It reviews supplied context and records local state. Your agent performs those external actions through its own tools. A Home Assistant or communication review is not a replacement for the corresponding service integration.
+Run `hermes plugins doctor jev-decisions`. Check that both the plugin and the `jev` toolset are enabled in the profile and platform you are using, then restart the relevant Hermes process. If model reviews fail, check that the OpenRouter key is available to that same process. A key set in a different terminal will not necessarily be available to the desktop backend.
 
-### Can I use it with an MCP client or another agent framework?
+### Can I use it with another agent?
 
-Yes, through the Python or CLI interface you connect to that framework. A wrapper must build state, enforce the decision, execute with the host's authority, and collect evidence. This is a portable integration boundary, not a claim of tested native support for every framework.
+Yes, if you connect its Python functions or command line tool to that agent. The portable part is the local policy, verification, and record keeping code. Native tool registration is for Hermes. This repository does not include a ready-made adapter for every agent framework. See [standalone installation and examples](docs/reference.md#install-the-standalone-python-and-cli-gateway).
 
-### What does `JEV_ENABLE_HOOKS` change?
+## Update or disable
 
-It opts the Hermes process into automatic reviews before and after tool calls and after model responses. Without it, use the six tools explicitly. The hooks remain advisory when enabled; they can add network requests, local records, and latency. Unset the variable or set it to `0`, then restart the process to turn them off.
-
-### Why are the tools missing after installation?
-
-Check both plugin enablement and the `jev` toolset in the profile running your session. Run `hermes plugins doctor jev-decisions`, then start a new session or restart the relevant long running process. If doctor resolves an unexpected installation, pass the plugin's absolute path. Model tools also need the key available to that process, not merely a different terminal.
-
-### Is a passing CI badge proof that the agent is safe?
-
-No. CI tests specified code behavior and packaging. It does not certify your prompts, authority rules, provider judgments, or service integrations. Test representative operations with synthetic data and known outcomes before using the plugin around consequential work.
-
-## Update or disable the plugin
-
-For a Git installation, inspect local changes before pulling. Run these commands inside the installed plugin directory:
+Inside the installed plugin directory, check for local changes before updating:
 
 ```bash
 git status
@@ -423,7 +172,7 @@ git pull
 hermes plugins doctor jev-decisions
 ```
 
-Keep a backup before upgrading an installation you have customized. If Git reports conflicting local changes, resolve them rather than overwriting them. Start a fresh Hermes process after the update.
+Back up custom changes and resolve conflicts rather than overwriting them. Restart the Hermes process after an update. If you install this in a larger system, pin a tested commit and check upgrades deliberately: the provider's Decisions API is currently an alpha API.
 
 To disable the plugin:
 
@@ -431,21 +180,13 @@ To disable the plugin:
 hermes plugins disable jev-decisions
 ```
 
-Restart the relevant process. Disabling the plugin does not erase its local journals. Retain or remove those separately according to your privacy requirements.
+Restart Hermes. Keep or remove its local journals separately, according to your privacy needs.
 
-## Development and verification
+## For developers
 
-From a source checkout:
+The [technical reference](docs/reference.md) contains all six tools, all 25 review definitions, custom questions, Python and command line examples, and test commands. The [integration guide](docs/integrations.md) covers approval handling, evidence, provider requests, and local storage. [CONTRIBUTING.md](CONTRIBUTING.md) explains contribution checks.
 
-```bash
-python3 -m pip install -e '.[test]'
-python3 -m pytest -q
-python3 tools/public_scan.py
-```
-
-Run tests with isolated runtime storage. Keep live provider tests separate from deterministic CI and use synthetic inputs. A passing test suite should be followed by a clean installation check, not just an import from a working directory containing private files.
-
-The repository separates its public plugin code from deployment specific collectors and private runtime state. [CONTRIBUTING.md](CONTRIBUTING.md) describes contribution checks; [SECURITY.md](SECURITY.md) explains the security boundary.
+The public package includes the code needed to load the plugin without private collectors or deployment files. CI tests Python 3.10, 3.11, and 3.12 and installs the package outside the checkout. Treat that as a tested starting point, then test the tasks you plan to use.
 
 ## License
 
