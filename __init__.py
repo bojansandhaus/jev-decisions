@@ -628,6 +628,8 @@ def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
             result = loop_label_outcome(args["decision_id"], args["success"], args.get("evidence"), args.get("labeler", "beau"), args.get("notes", ""))
         elif action == "reopen":
             result = loop_reopen(args["decision_id"], args.get("reason", "new contradictory evidence"), args.get("evidence"))
+        elif action == "assess":
+            result = loop_assess(args["decision_id"])
         elif action == "list":
             result = {"records": loop_list(args.get("limit", 100))}
         else:
