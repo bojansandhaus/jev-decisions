@@ -600,6 +600,8 @@ JEV_LOOP_SCHEMA = {
             "status": {"type": "string"},
             "success": {"type": "boolean"},
             "notes": {"type": "string"},
+            "labeler": {"type": "string"},
+            "reason": {"type": "string"},
             "limit": {"type": "integer"},
         },
         "required": ["action"],
