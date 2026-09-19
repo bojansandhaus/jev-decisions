@@ -53,12 +53,14 @@ The plugin exposes six tools under the `jev` toolset.
 <table>
 <tr><th>Tool</th><th>Use it for</th><th>Provider required?</th></tr>
 <tr><td><code>jev_decide</code></td><td>Custom typed questions against bounded state.</td><td>Yes</td></tr>
-<tr><td><code>jev_workflow</code></td><td>A prepared review such as <code>plan_review</code> or <code>output_review</code>.</td><td>Yes</td></tr>
+<tr><td><code>jev_workflow</code></td><td>A prepared review such as <code>plan_review</code>, <code>output_review</code>, or the opt in <code>approval_review</code>.</td><td>Yes</td></tr>
 <tr><td><code>jev_gateway</code></td><td>Local action policy, verification, domain classification, and ledger snapshot.</td><td>No</td></tr>
 <tr><td><code>jev_ingest</code></td><td>Open a rule classified case from supplied event data.</td><td>No</td></tr>
 <tr><td><code>jev_ledger</code></td><td>Record reviews, labeled outcomes, commitments, and decisions; inspect metrics.</td><td>No</td></tr>
 <tr><td><code>jev_loop</code></td><td>Link decisions, observations, and outcomes; assess the resulting history.</td><td>No</td></tr>
 </table>
+
+The `approval_review` workflow is an opt in advisory check for flagged commands. It returns typed answers and a deterministic applied rule; it never authorizes execution. Configure the optional provider through [the approval guide](approvals.md).
 
 Three optional hooks observe the agent lifecycle when `JEV_ENABLE_HOOKS` is enabled:
 
