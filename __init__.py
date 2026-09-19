@@ -461,7 +461,13 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     if not tool_name:
         return None
     result_text = _safe_text(result)
-    case_id = update_tool_result(tool_name, result_text, verified=False)
+    case_id = update_tool_result(tool_name, result_text, verified=False, invocation_id=invocation_id)
+    if case_id:
+        try:
+            loop_record_observation(case_id, result_text, f"tool:{tool_name}", None)
+            loop_record_outcome(case_id, "returned_unverified", None, result_text, "Tool returned, but success still requires verification")
+        except Exception:
+            pass
     state = {
         "tool_name": tool_name,
         "arguments": _safe_text(args, 5000),
