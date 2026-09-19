@@ -461,7 +461,12 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     if not tool_name:
         return None
     result_text = _safe_text(result)
-    case_id = update_tool_result(tool_name, result_text, verified=False, invocation_id=invocation_id)
+    verification = gateway_verify({
+        "changed": bool(isinstance(args, dict) and args.get("changed")),
+        "read_back": bool(isinstance(args, dict) and args.get("read_back")),
+        "evidence": bool(result_text),
+    })
+    case_id = update_tool_result(tool_name, result_text, verified=verification["verified"], invocation_id=invocation_id)
     if case_id:
         try:
             loop_record_observation(case_id, result_text, f"tool:{tool_name}", None)
