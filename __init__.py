@@ -470,7 +470,7 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     if case_id:
         try:
             loop_record_observation(case_id, result_text, f"tool:{tool_name}", None)
-            loop_record_outcome(case_id, "returned_unverified", None, result_text, "Tool returned, but success still requires verification")
+            loop_record_outcome(case_id, "verified" if verification["verified"] else "awaiting_verification", verification["verified"], result_text, verification["next"])
         except Exception:
             pass
     state = {
