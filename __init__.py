@@ -31,6 +31,10 @@ try:
     from .closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
 except ImportError:
     from closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
+try:
+    from .verification import verify_observation
+except ImportError:
+    from verification import verify_observation
 
 _TOOLSET = "jev"
 _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
