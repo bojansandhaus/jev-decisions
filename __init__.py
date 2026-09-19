@@ -534,6 +534,55 @@ def _wire_platform_event_handler(native: Any, adapter: Any) -> None:
     if setter is not None:
         setter(_on_platform_event)
 
+JEV_LOOP_SCHEMA = {
+    "name": "jev_loop",
+    "description": "Record and assess closed loop decisions, observations, and outcomes.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["record_decision", "record_observation", "record_outcome", "assess", "list"]},
+            "decision_id": {"type": "string"},
+            "question": {"type": "string"},
+            "chosen": {"type": "string"},
+            "options": {"type": "array"},
+            "evidence": {},
+            "assumptions": {"type": "array"},
+            "owner": {"type": "string"},
+            "deadline": {"type": "string"},
+            "observation": {"type": "string"},
+            "source": {"type": "string"},
+            "supports": {"type": "boolean"},
+            "status": {"type": "string"},
+            "success": {"type": "boolean"},
+            "notes": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+
+def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
+    action = args.get("action")
+    try:
+        if action == "record_decision":
+            result = loop_record_decision(args.get("question", ""), args.get("chosen", ""), args.get("options"), args.get("evidence"), args.get("assumptions"), args.get("owner", "beau"), args.get("deadline"))
+        elif action == "record_observation":
+            result = loop_record_observation(args["decision_id"], args.get("observation", ""), args.get("source", "unknown"), args.get("supports"))
+        elif action == "record_outcome":
+            result = loop_record_outcome(args["decision_id"], args.get("status", "unknown"), bool(args.get("success")), args.get("evidence"), args.get("notes", ""))
+        elif action == "assess":
+            result = loop_assess(args["decision_id"])
+        elif action == "list":
+            result = {"records": loop_list(args.get("limit", 100))}
+        else:
+            return json.dumps({"error": "unknown action"})
+        return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+    except (KeyError, TypeError, ValueError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
 def register(ctx: Any) -> None:
     ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
     ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
