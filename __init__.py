@@ -475,11 +475,13 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     if not tool_name:
         return None
     result_text = _safe_text(result)
-    verification = gateway_verify({
-        "changed": args.get("changed") if isinstance(args, dict) else None,
-        "read_back": args.get("read_back") if isinstance(args, dict) else None,
-        "evidence": args.get("evidence") if isinstance(args, dict) else None,
-    })
+    verification_source = "unknown"
+    lowered_tool = tool_name.lower()
+    for candidate in ("paperless", "hindsight", "home_assistant", "docker", "nas"):
+        if candidate in lowered_tool:
+            verification_source = candidate
+            break
+    verification = verify_observation(verification_source, args if isinstance(args, dict) else {}, result)
     result_metadata = {
         "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
         "result_chars": len(result_text),
