@@ -1,82 +1,174 @@
 # Jev Decisions
 
-### Typed model judgments, deterministic authority
+### A typed judgment layer for Hermes and other AI agents
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 
-Jev Decisions gives Hermes a disciplined judgment layer for bounded questions. Jev can classify risk, compare options, inspect evidence, and review output. It cannot execute what it recommends.
+Jev Decisions gives an agent a small, explicit boundary between **judgment** and **execution**.
 
-The design is simple:
+Use it when an agent must answer questions such as:
 
-```text
-bounded state
-     │
-     ▼
- typed Jev judgment  ───────►  recommendation
-     │                                  │
-     ▼                                  ▼
- deterministic policy  ◄──────  human confirmation
-     │
-     ▼
- verified action or explicit hold
+- Is this action safe to suggest?
+- Does the evidence prove that the action succeeded?
+- Is this output grounded and complete?
+- Which option is best supported?
+- Should the agent act, ask one question, wait for evidence, or stop?
+
+Jev supplies typed judgments. Deterministic code retains authority. The project never executes a model recommendation.
+
+> **Status:** v0.1.0, usable now for Hermes plugins, Python agents, shell workflows, and service integrations. Keep Jev advisory until your own labeled evaluation supports stronger automation.
+
+## The boundary
+
+```mermaid
+flowchart LR
+    A[Agent state] --> B[Bounded question]
+    B --> C[Jev typed judgment]
+    C --> D[Recommendation]
+    D --> E{Deterministic gateway}
+    E -->|observe| F[Continue]
+    E -->|suggest| G[Propose reversible action]
+    E -->|human| H[Require confirmation]
+    G --> I[Execute elsewhere]
+    I --> J[Read back exact target]
+    J --> K[Verify evidence]
 ```
 
-The model is the judge. Code remains the authority.
+The model answers a narrow question. Your agent decides what authority is required. Your integration performs the action. Your integration reads the target back and checks the result.
 
-## Why this exists
+## Why it exists
 
-Agents fail in two opposite ways. They can act too quickly on weak evidence, or keep analyzing after the next step is already clear. Jev adds small, typed judgments at those seams:
+Agent systems tend to fail at the seams. They act on weak evidence, confuse a claim with proof, retain private material forever, or continue analyzing after the next action is clear.
 
-- Is the result complete?
-- Is this action safe to suggest?
-- Does the evidence prove success?
-- Is the draft grounded and actionable?
-- Is the conversation circling a settled choice?
-- Should the system ask a human, wait for evidence, or act now?
+Jev Decisions turns those seams into named, inspectable decisions. Each decision has a bounded input, a typed output, a recorded authority, and a visible next step.
 
-Every judgment is bounded. Every consequential action still passes through deterministic policy and verification.
+The project has two layers:
 
-## What you get
+1. **Semantic judgment:** Jev evaluates bounded state through Noul, Choice, or Score questions.
+2. **Execution boundary:** local deterministic rules classify risk and verification requirements. They do not defer authority to the model.
 
-### Five Hermes tools
+## Install in Hermes
+
+Clone the project into the Hermes plugin directory:
+
+```bash
+git clone https://github.com/bojansandhaus/jev-decisions.git \
+  ~/.hermes/plugins/jev-decisions
+
+hermes plugins enable jev-decisions
+hermes plugins doctor jev-decisions
+```
+
+Restart Hermes after installing or changing plugin code. The plugin registers the `jev` toolset, five tools, and three advisory hooks without modifying Hermes core.
+
+Configure the provider key through Hermes secret management or the environment. Never put a live key in this repository:
+
+```bash
+export OPENROUTER_API_KEY="..."
+```
+
+The provider defaults are:
+
+```text
+Endpoint: https://openrouter.ai/api/alpha/decisions
+Model:    typesafe/jev-1.13
+```
+
+The Hermes adapter reads `OPENROUTER_API_KEY` through the active Hermes secret scope when available. It sends only the bounded state supplied by the caller. Redact credentials, private correspondence, full archives, and unnecessary personal data before creating state.
+
+## Use from any Python agent
+
+The repository is not tied to Hermes at the policy boundary. Install it into a Python environment:
+
+```bash
+python3 -m pip install .
+```
+
+The standalone package exposes the deterministic gateway through Python modules and a command line program:
+
+```bash
+jev-gateway decide <<'JSON'
+{"action":"restart_service","external":true,"reversible":true}
+JSON
+```
+
+Expected shape:
+
+```json
+{
+  "authority": "deterministic_policy",
+  "decision": "suggest",
+  "reason": {
+    "credential": false,
+    "destructive": false,
+    "external": true,
+    "reversible": true
+  }
+}
+```
+
+Verify a state change:
+
+```bash
+jev-gateway verify <<'JSON'
+{"changed":true,"read_back":false,"evidence":false}
+JSON
+```
+
+The gateway returns `read_back` until the exact target has been inspected:
+
+```json
+{
+  "authority": "deterministic_verification",
+  "next": "read_back",
+  "verified": false
+}
+```
+
+You can also call it from Python:
+
+```python
+from gateway import decide, verify
+
+policy = decide({
+    "action": "restart_service",
+    "external": True,
+    "reversible": True,
+})
+
+verification = verify({
+    "changed": True,
+    "read_back": True,
+    "evidence": True,
+})
+```
+
+This gives other agent frameworks a stable, provider independent safety boundary. To add Jev semantic judgments, call the Decisions API from your framework, then pass the result through the same local policy and verification boundary. See [docs/integrations.md](docs/integrations.md).
+
+## Hermes tools
 
 | Tool | Purpose |
 | --- | --- |
 | `jev_decide` | Run a custom typed Noul, Choice, or Score judgment. |
-| `jev_workflow` | Run a reusable workflow from the catalog. |
-| `jev_gateway` | Apply deterministic policy and verification rules. |
-| `jev_ingest` | Turn a bounded event from another system into a classified Jev case. |
-| `jev_ledger` | Record structured reviews, outcomes, commitments, decisions, and metrics locally. |
+| `jev_workflow` | Run one of the reusable bounded workflows. |
+| `jev_gateway` | Apply deterministic policy, verification, classification, or snapshot operations. |
+| `jev_ingest` | Classify a bounded event from another system and open a Jev case. |
+| `jev_ledger` | Record reviews, outcomes, commitments, decisions, and local metrics. |
 
-### Three advisory hooks
+### Advisory hooks
 
 | Hook | Review |
 | --- | --- |
 | `pre_tool_call` | Prospective tool risk and verification depth. |
-| `post_tool_call` | Whether the returned evidence proves success. |
+| `post_tool_call` | Whether returned evidence proves success. |
 | `post_llm_call` | Grounding, completeness, actionability, risk, and decision circling. |
 
 Hooks run in shadow mode. They observe and record. They do not block, rewrite, approve, deny, or execute.
 
-## Workflow catalog
-
-The plugin contains 25 reusable workflows:
-
-| Area | Workflows |
-| --- | --- |
-| Output and progress | `goal_judge`, `output_review`, `next_action`, `decision_circling`, `plan_review` |
-| Tools and actions | `command_review`, `action_verify`, `tool_result_verify`, `verification_depth`, `escalation` |
-| Memory and evidence | `memory_gate`, `memory_review`, `memory_maintenance`, `recall_rerank`, `claim_status`, `evidence_review` |
-| Comparison and choice | `agent_referee`, `option_select`, `purchase_review` |
-| Operations | `anomaly_review`, `daily_anomaly`, `infrastructure_review`, `document_quality` |
-| Communication and promotion | `communication_review`, `promotion_review` |
-
-These are decision classes, not hard coded integrations. Home Assistant, infrastructure, document systems, research, communication, purchasing, and personal workflows can pass bounded state through the same boundary.
-
 ## Typed questions
 
-Jev accepts a map of named questions. Each question declares its type, instructions, and criteria.
+Jev accepts a map of named questions. Every question declares a type, instructions, and criteria.
 
 ```json
 {
@@ -107,13 +199,28 @@ Jev accepts a map of named questions. Each question declares its type, instructi
 }
 ```
 
-### The three primitives
+The primitives are:
 
-- **Noul** returns a true or false probability.
-- **Choice** selects from named options and may include probabilities and confidence.
-- **Score** places the state on an ordered rubric.
+- **Noul:** calibrated true or false judgment.
+- **Choice:** selection from named options.
+- **Score:** placement on an ordered rubric.
 
-Jev returns structured answers. The adapter does not ask Jev for prose.
+Jev returns structured answers, probabilities, and usage metadata. The adapter does not ask Jev for prose.
+
+## Workflow catalog
+
+The plugin ships 25 reusable workflow definitions:
+
+| Area | Workflows |
+| --- | --- |
+| Output and progress | `goal_judge`, `output_review`, `next_action`, `decision_circling`, `plan_review` |
+| Tools and actions | `command_review`, `action_verify`, `tool_result_verify`, `verification_depth`, `escalation` |
+| Memory and evidence | `memory_gate`, `memory_review`, `memory_maintenance`, `recall_rerank`, `claim_status`, `evidence_review` |
+| Comparison and choice | `agent_referee`, `option_select`, `purchase_review` |
+| Operations | `anomaly_review`, `daily_anomaly`, `infrastructure_review`, `document_quality` |
+| Communication and promotion | `communication_review`, `promotion_review` |
+
+These are decision classes, not hard coded integrations. Home Assistant, infrastructure, document systems, research, communication, purchasing, and personal workflows can pass bounded state through the same boundary.
 
 ## Deterministic authority
 
@@ -123,140 +230,95 @@ The gateway is deliberately stricter than the model:
 from gateway import decide, verify
 
 policy = decide({
-    "action": "restart_service",
+    "action": "delete_backup",
     "external": True,
-    "reversible": True,
 })
-# policy["decision"] == "suggest"
+assert policy["decision"] == "human"
 
 check = verify({
     "changed": True,
     "read_back": False,
     "evidence": False,
 })
-# check["next"] == "read_back"
+assert check["next"] == "read_back"
 ```
 
-Policy outcomes are:
+Policy outcomes:
 
-- `observe`, no external effect is present
-- `suggest`, a reversible external action may be proposed
-- `human`, confirmation is required
+- `observe`: no external effect is present.
+- `suggest`: a reversible external action may be proposed.
+- `human`: confirmation is required.
 
-Verification outcomes are:
+Verification outcomes:
 
-- `done`, no further proof is required
-- `read_back`, inspect the exact target
-- `inspect_evidence`, examine logs or equivalent direct evidence
+- `done`: no further proof is required.
+- `read_back`: inspect the exact target.
+- `inspect_evidence`: examine logs or equivalent direct evidence.
 
 The gateway never runs the requested operation.
 
-## Install in Hermes
+## Cases, ledger, and calibration
 
-Clone the repository into the user plugin directory, then enable it:
+The append only ledger records structured metadata for reviews, outcomes, commitments, and decisions. It is designed for local calibration, not for storing private conversation transcripts.
 
-```bash
-git clone https://github.com/bojansandhaus/jev-decisions.git \
-  ~/.hermes/plugins/jev-decisions
+The case layer can classify bounded events from domains such as infrastructure, Home Assistant, documents, research, communication, purchases, and health. It records a case state and outcome without requiring a domain specific connector.
 
-hermes plugins enable jev-decisions
-hermes plugins doctor jev-decisions
-```
+The default path is advisory:
 
-Restart Hermes after changing plugin code. The manifest registers the `jev` toolset, four tools, and three hooks without modifying Hermes core.
-
-## Configuration
-
-Keep credentials outside the repository:
-
-```bash
-# configure OPENROUTER_API_KEY outside this repository
-export JEV_HOME="$HOME/.jev"
-```
-
-Hermes installations can resolve `OPENROUTER_API_KEY` through the Hermes secret scope. Standalone use reads the environment. Never place a real key in source, tests, issues, fixtures, or commit history.
-
-The current provider contract is:
-
-```text
-Endpoint: https://openrouter.ai/api/alpha/decisions
-Model:    typesafe/jev-1.13
-```
-
-Provider responses may contain a versioned model identifier. Treat that value as metadata, not as permission to act.
-
-## JSON gateway for other systems
-
-The gateway can be used without Hermes:
-
-```bash
-printf '%s\n' '{"external":true,"reversible":true}' \
-  | python3 jev_gateway.py decide
-
-printf '%s\n' '{"changed":true,"read_back":false,"evidence":false}' \
-  | python3 jev_gateway.py verify
-
-python3 jev_gateway.py snapshot
-```
-
-This makes the policy boundary reusable from Home Assistant automations, infrastructure scripts, document workflows, research tooling, and other agents.
-
-## Shadow mode and calibration
-
-The default operating mode is advisory:
-
-1. Hermes calls Jev with bounded, redacted state.
+1. The agent creates bounded, redacted state.
 2. Jev returns typed answers.
-3. The plugin writes structured metadata and hashes.
-4. Deterministic policy decides whether execution is possible.
-5. A human or direct read back establishes the outcome.
-6. The ledger can record whether the judgment was correct.
+3. The gateway applies deterministic policy.
+4. The agent executes only within its own authority model.
+5. The agent reads the exact target back.
+6. The ledger records the outcome for later evaluation.
 
-The ledger intentionally excludes raw prompts, drafts, tool arguments, tool results, credentials, and private conversation history. Promotion beyond shadow mode should happen one narrow workflow at a time, after labeled outcomes show that the fallback remains safe.
+Keep Jev in shadow mode until labeled outcomes show that a workflow is reliable enough for your use case.
 
-## Privacy and public repository rules
+## Privacy and security
 
-This repository contains code, generic fixtures, and documentation only. It does not contain:
+The public project contains code, generic fixtures, and documentation only. It must never contain:
 
 - API keys, tokens, passwords, or secret files
 - Hermes sessions, logs, memory, or local calibration records
 - personal names, addresses, identifiers, or private case data
 - generated bytecode, caches, or machine specific configuration
 
-Run the public scan before every push:
+Run the scanner before every release or push:
 
 ```bash
 python3 tools/public_scan.py
 ```
 
+Read [SECURITY.md](SECURITY.md) before sending state to an external model provider. Treat every model answer as untrusted data. Keep human confirmation and deterministic checks in front of irreversible actions.
+
 ## Development
 
 ```bash
+python3 -m pip install -e '.[test]'
 python3 -m pytest -q
 python3 -m compileall -q .
 python3 tools/public_scan.py
 ```
 
-For a live provider check, supply the key through the environment and run your own bounded fixture. The normal test suite makes no network request.
+The normal test suite makes no network request. A live provider check is optional and requires an API key supplied outside the repository.
 
 ## Repository layout
 
 ```text
 jev-decisions/
-├── __init__.py             Hermes plugin entrypoint and typed workflows
-├── gateway.py              Deterministic policy and verification
-├── ledger.py               Append only structured local records
-├── ingest.py               Cross system event classification
-├── fabric.py               Jev case queue
-├── jev_gateway.py          JSON stdin gateway
-├── shadow_report.py        Review and calibration report
-├── plugin.yaml             Hermes manifest
-├── runtime.py              Hermes or standalone runtime bridge
-├── tools/
-│   ├── public_scan.py      Public safety scan
-├── tests/
-├── docs/
-└── pyproject.toml
+├── __init__.py       Hermes plugin entrypoint and typed workflows
+├── gateway.py        Deterministic policy and verification
+├── ledger.py         Append only local records
+├── ingest.py         Cross system event classification
+├── fabric.py         Jev case queue
+├── jev_gateway.py    JSON gateway for non Hermes callers
+├── shadow_report.py  Review and calibration report
+├── plugin.yaml       Hermes manifest
+├── runtime.py        Hermes or standalone runtime bridge
+├── tools/            Public safety scanner
+├── tests/            Generic behavior tests
+├── docs/             Integration guidance
+└── pyproject.toml    Python package metadata and CLI entrypoint
 ```
 
 ## Design principles

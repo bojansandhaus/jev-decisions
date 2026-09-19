@@ -15,6 +15,25 @@ dependencies = []
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
+[tool.setuptools]
+py-modules = [
+    "__init__",
+    "cockpit",
+    "fabric",
+    "gateway",
+    "ingest",
+    "jev_case",
+    "jev_cockpit",
+    "jev_gateway",
+    "ledger",
+    "runtime",
+    "shadow_report",
+]
+
+[project.scripts]
+jev-gateway = "jev_gateway:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
