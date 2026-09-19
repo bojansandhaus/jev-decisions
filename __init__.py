@@ -571,7 +571,10 @@ def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
         elif action == "record_observation":
             result = loop_record_observation(args["decision_id"], args.get("observation", ""), args.get("source", "unknown"), args.get("supports"))
         elif action == "record_outcome":
-            result = loop_record_outcome(args["decision_id"], args.get("status", "unknown"), bool(args.get("success")), args.get("evidence"), args.get("notes", ""))
+            raw_success = args.get("success")
+            if raw_success is not None and not isinstance(raw_success, bool):
+                raise ValueError("success must be boolean or omitted")
+            result = loop_record_outcome(args["decision_id"], args.get("status", "unknown"), raw_success, args.get("evidence"), args.get("notes", ""))
         elif action == "assess":
             result = loop_assess(args["decision_id"])
         elif action == "list":
