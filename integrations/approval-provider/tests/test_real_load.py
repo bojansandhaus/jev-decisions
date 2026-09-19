@@ -138,12 +138,17 @@ spec.loader.exec_module(mod)
 
 assert mod._route_for("https://openrouter.ai/api/alpha")[0] == "/decisions"
 assert mod._route_for("https://OPENROUTER.AI/api/alpha")[0] == "/decisions"
-try:
-    mod._route_for("https://example.com/v1")
-except RuntimeError:
-    pass
-else:
-    raise AssertionError("non OpenRouter route was accepted")
+for unsupported in (
+    "https://example.com/v1",
+    "https://evilopenrouter.ai/api/alpha",
+    "https://openrouter.ai.evil.test/api/alpha",
+):
+    try:
+        mod._route_for(unsupported)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError(f"non OpenRouter route was accepted: {unsupported}")
 # the OpenRouter model list must carry the filter, or it pulls the whole 447-model catalogue
 assert "output_modalities=decisions" in mod._route_for("https://openrouter.ai/api/alpha")[1]
 print("route_for: OpenRouter -> /decisions, all other hosts rejected")

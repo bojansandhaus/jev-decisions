@@ -199,7 +199,7 @@ def _setting(key: str, default: Any = None) -> Any:
 def _route_for(base_url: str) -> Tuple[str, str, str]:
     """Return OpenRouter's typed route, refusing every other host."""
     host = (urllib.parse.urlparse(base_url or DEFAULT_BASE_URL).hostname or "").lower()
-    if not host.endswith(_OPENROUTER_HOST):
+    if host != _OPENROUTER_HOST:
         raise RuntimeError(f"{PROVIDER_NAME}: only OpenRouter is supported")
     return _ROUTES[_OPENROUTER_HOST]
 

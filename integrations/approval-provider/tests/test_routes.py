@@ -26,7 +26,12 @@ assert field == "data"
 assert "output_modalities=decisions" in models_url
 assert jev.JevClient(base_url=base, api_key="fixture")._default_model() == "~typesafe/jev-latest"
 
-for unsupported in ("https://api.typesafe.ai/v1", "https://example.com/v1"):
+for unsupported in (
+    "https://api.typesafe.ai/v1",
+    "https://example.com/v1",
+    "https://evilopenrouter.ai/api/alpha",
+    "https://openrouter.ai.evil.test/api/alpha",
+):
     try:
         jev._route_for(unsupported)
     except RuntimeError:
