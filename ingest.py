@@ -8,7 +8,7 @@ try:
 except ImportError:
     from fabric import close_case, open_case
 
-_ACTIVE_CASES: dict[str, str] = {}
+_ACTIVE_CASES: dict[str, list[str]] = {}
 _ACTIVE_INVOCATIONS: dict[str, str] = {}
 
 
@@ -36,7 +36,7 @@ def ingest_event(source: str, event_type: str, payload: dict[str, Any]) -> dict[
     case_id = open_case(domain, {"source": source, "event_type": event_type, **payload})
     tool_name = payload.get("tool_name")
     if event_type == "tool_call" and tool_name:
-        _ACTIVE_CASES[str(tool_name)] = case_id
+        _ACTIVE_CASES.setdefault(str(tool_name), []).append(case_id)
         invocation_id = payload.get("invocation_id")
         if invocation_id:
             _ACTIVE_INVOCATIONS[str(invocation_id)] = case_id
@@ -51,7 +51,8 @@ def update_tool_result(
 ) -> str | None:
     case_id = (_ACTIVE_INVOCATIONS.get(str(invocation_id)) if invocation_id else None)
     if not case_id:
-        case_id = _ACTIVE_CASES.get(str(tool_name))
+        pending = _ACTIVE_CASES.get(str(tool_name), [])
+        case_id = pending[0] if pending else None
     if not case_id:
         return None
     status = "resolved" if verified else "awaiting_verification"
@@ -59,6 +60,9 @@ def update_tool_result(
     if verified:
         if invocation_id:
             _ACTIVE_INVOCATIONS.pop(str(invocation_id), None)
-        if _ACTIVE_CASES.get(str(tool_name)) == case_id:
+        pending = _ACTIVE_CASES.get(str(tool_name), [])
+        if case_id in pending:
+            pending.remove(case_id)
+        if not pending:
             _ACTIVE_CASES.pop(str(tool_name), None)
     return case_id

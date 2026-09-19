@@ -70,6 +70,78 @@ Optional platform event handlers can also record event metadata for Home Assista
 
 Hooks return no approval, replacement answer, or execution instruction. They may record local review data. Model reviews can add provider requests and latency when enabled; see the configuration and privacy details in [the integration guide](integrations.md).
 
+## Tool actions and records
+
+### Local policy: `jev_gateway`
+
+- `decide`: apply local rules to `state`. Destructive actions, credential changes, and irreversible external actions recommend `human`; other external actions recommend `suggest`; internal work recommends `observe`.
+- `verify`: require explicit boolean `changed`, `read_back`, and `evidence` fields. Missing or invalid proof cannot produce a verified result.
+- `classify`: classify supplied `state` within a required `domain` using local rules.
+- `snapshot`: return the timestamp and ledger metrics.
+
+Use JSON booleans, never strings such as `"false"`. The policy falls back to its defaults for omitted or invalid boolean fields: `reversible` defaults to true; `external`, `destructive`, and `credential` default to false. Supply these facts explicitly and validate them in your host. The rule is not a shell command parser or an enforcement gate. The `success` field on a tool response describes the handler result, not proof that your external task succeeded. Inspect `verified` and `next` when checking evidence.
+
+### Review ledger: `jev_ledger`
+
+- `record_review`: create a review with `details`; `status` supplies its workflow label. Supplying an existing `review_id` returns that ID without creating another review.
+- `record_outcome`: attach boolean `correct` and optional `details` to a `review_id`.
+- `add_commitment` and `add_decision`: record nonempty `text`, optional `owner`, `deadline`, `status`, and `details`.
+- `close`: append a closure against a `review_id`. This preserves the earlier entry.
+- `list`: return the latest 200 entries.
+- `metrics`: summarize recorded reviews, outcomes, labels, and record kinds. These figures describe supplied labels, not an independent benchmark of model quality.
+
+### Decision journal: `jev_loop`
+
+- `record_decision`: record `question`, `chosen`, optional `options`, `evidence`, `assumptions`, `owner`, and `deadline`. Keep the returned `decision_id`.
+- `record_observation`: attach an `observation` and `source` to that ID. Omit `supports` when support is unknown.
+- `record_outcome`: attach `status`, optional boolean `success`, `evidence`, and `notes`. Omitted success remains unknown.
+- `label_outcome`: attach an explicit boolean `success`, supporting `evidence`, optional `labeler`, and `notes`. The default labeler is `user`; this field is attribution supplied by the caller, not authenticated identity.
+- `reopen`: append a reason and optional evidence for revisiting a decision.
+- `assess`: summarize the decision's observations and labeled outcomes, then recommend collecting an outcome, continuing observation, reviewing behavior, or reviewing new evidence.
+- `list`: return recent journal rows; `limit` is clamped to 1 through 500.
+- `verify_observation`: compare a supplied observation with an explicit expected value, without a provider request or journal write.
+
+Assessment uses explicit outcome labels when present, otherwise known boolean outcomes. Unknown outcomes do not enter the success fraction. Multiple labels count separately; the fraction is descriptive, not a statistical guarantee. A reopen record continues to request review of new evidence. The journal does not train a model or change execution rules.
+
+### Observation comparison
+
+Call `jev_loop` with:
+
+```json
+{
+  "action": "verify_observation",
+  "source": "home_assistant",
+  "expected": "on",
+  "result": {"state": "off"}
+}
+```
+
+This returns `verified: false`, `status: "mismatch"`, and `next: "read_back_expected"`. A matching `on` observation returns `matched`. Without an expected value, the next step is `compare_expected`. Python callers can use `verification.verify_observation(source, context, result)`.
+
+The comparator trims whitespace and ignores letter case. For an object result it compares the `state` field; otherwise it compares the supplied result as text. `expected_state` and `expected_status` are aliases for `expected`. Error or timeout text produces `unavailable`. This is a small text/state comparator, not a general object validator or service health client. It does not contact a device, check timestamps, or prove that the observation belongs to the requested target. The host must establish those facts.
+
+### Event cases: `jev_ingest`
+
+Supply `source`, `event_type`, and a `payload` object. Ingestion routes the event to a domain, applies local classification, and returns a case ID. Python integrations can call `fabric.open_case`, `fabric.close_case`, and `fabric.queue`; queue filters accept status and domain. Tool result correlation uses invocation IDs when supplied. Supply those IDs for overlapping calls to the same tool.
+
+## Reports and supporting commands
+
+Only `jev-gateway` is installed as a named console command. Other packaged entry points run as Python modules:
+
+```bash
+printf '%s\n' '{}' | python3 -m jev_case list
+printf '%s\n' 'I will review the draft.' | python3 -m jev_cockpit
+python3 -m shadow_report
+```
+
+`jev_case` supports `open`, `close`, and `list`, reading a JSON object from stdin. Use its command help for case ID, domain, and status options. Opening and closing cases writes local records. `jev_cockpit` prints a case/ledger snapshot and, when text is supplied, candidate commitments. Detection is a simple English phrase rule; candidates are not confirmed obligations.
+
+The Python `cockpit` module also exposes `promote_commitment`, `stale_cases`, and `digest`. Promotion writes a reviewed commitment. The other functions summarize existing records. These functions are not additional registered Hermes tools or a graphical dashboard.
+
+`shadow_report` summarizes automatic review requests, answer probabilities, reported cost, ledger labels, and journal outcomes. Request success is not task success. Its default input is `~/.hermes/logs/jev-shadow.jsonl`; use its log path option for a named profile or standalone storage. Its help also offers JSON output. Reports depend on the records you retained and labels you supplied. Journals are append-only in normal use, but are not cryptographically tamper evident and can be changed by someone with filesystem access.
+
+The package currently uses POSIX file locking for journal writes. Linux is exercised by CI. Native Windows is not supported by this locking implementation; use a Linux environment such as WSL rather than assuming the PowerShell activation example above establishes platform compatibility.
+
 ## Prepared review catalog
 
 The plugin includes 25 named workflows. Supply only the context each question needs.

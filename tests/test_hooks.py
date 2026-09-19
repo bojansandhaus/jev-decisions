@@ -46,3 +46,40 @@ def test_platform_events_are_opt_in(plugin, monkeypatch, tmp_path):
     monkeypatch.delenv('JEV_ENABLE_HOOKS', raising=False)
     asyncio.run(plugin._on_platform_event({'text': 'fixture'}))
     assert not list(tmp_path.rglob('*.jsonl'))
+
+
+def test_loop_handler_verifies_without_requiring_a_label(plugin):
+    result = json.loads(plugin.jev_loop_handler({
+        'action': 'verify_observation',
+        'source': 'docker',
+        'result': 'running',
+    }))
+    assert result['success'] is True
+    assert result['verified'] is False
+    assert result['next'] == 'compare_expected'
+
+
+def test_loop_handler_labels_only_on_explicit_label_action(plugin):
+    result = json.loads(plugin.jev_loop_handler({
+        'action': 'label_outcome',
+        'decision_id': 'decision-1',
+        'success': True,
+        'evidence': {'read_back': True},
+    }))
+    assert result['success'] is True
+    assert result['kind'] == 'outcome_label'
+
+
+def test_provider_schema_failure_is_not_retried(monkeypatch, plugin):
+    import __init__ as package
+    calls = []
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def read(self): return b'{}'
+
+    monkeypatch.setattr(package, 'urlopen', lambda *args, **kwargs: calls.append(1) or Response())
+    with pytest.raises(RuntimeError, match='no valid answers map'):
+        package._request({'state': {}, 'questions': {}}, 'synthetic')
+    assert len(calls) == 1

@@ -54,6 +54,33 @@ def calibration_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def closed_loop_calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    labels = [row for row in rows if row.get("kind") == "outcome_label" and isinstance(row.get("success"), bool)]
+    correct = sum(1 for row in labels if row.get("success") is True)
+    by_decision: dict[str, list[dict[str, Any]]] = {}
+    for row in labels:
+        by_decision.setdefault(str(row.get("decision_id", "unknown")), []).append(row)
+    weak = []
+    for decision_id, items in by_decision.items():
+        accuracy = sum(1 for item in items if item.get("success") is True) / len(items)
+        if len(items) >= 5 and accuracy <= 0.6:
+            weak.append((accuracy, decision_id))
+    weak.sort()
+    recommendation = "collect_more_labeled_outcomes"
+    if weak:
+        recommendation = f"review_workflow:{weak[0][1]}"
+    return {
+        "labeled": len(labels),
+        "correct": correct,
+        "incorrect": len(labels) - correct,
+        "accuracy": round(correct / len(labels), 4) if labels else None,
+        "decisions_with_labels": len(by_decision),
+        "weak_decisions": [decision_id for _, decision_id in weak],
+        "promotion_ready": len(labels) >= 100 and correct / len(labels) >= 0.95 if labels else False,
+        "recommendation": recommendation,
+    }
+
+
 def probability(answer: dict[str, Any], key: str) -> float | None:
     value = answer.get(key)
     if not isinstance(value, dict):
@@ -154,6 +181,7 @@ def main() -> None:
     args = parser.parse_args()
     report = build_report(load_records(args.log))
     report["calibration"] = calibration_summary(load_ledger(args.log.with_name("jev-ledger.jsonl")))
+    report["closed_loop"] = closed_loop_calibration(load_ledger(args.log.with_name("jev-closed-loop.jsonl")))
     if args.as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
         return
@@ -165,6 +193,7 @@ def main() -> None:
     print(f"Risk counts: {report['risk_counts']}")
     print(f"Average probabilities: {report['average_probability']}")
     print(f"Calibration: {report['calibration']}")
+    print(f"Closed loop: {report['closed_loop']}")
     print(f"Cost: {report['cost']}")
 
 

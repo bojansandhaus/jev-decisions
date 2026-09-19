@@ -11,10 +11,10 @@ except ImportError:
 
 
 def decide(state: dict[str, Any]) -> dict[str, Any]:
-    reversible = state.get("reversible", True)
-    external = state.get("external", False)
-    destructive = state.get("destructive", False) or str(state.get("action", "")).lower().startswith(("delete", "destroy", "wipe"))
-    credential = state.get("credential", False)
+    reversible = _boolean(state, "reversible", True)
+    external = _boolean(state, "external", False)
+    destructive = _boolean(state, "destructive", False) or str(state.get("action", "")).lower().startswith(("delete", "destroy", "wipe"))
+    credential = _boolean(state, "credential", False)
     if destructive or credential or (external and not reversible):
         decision = "human"
     elif external:
@@ -62,7 +62,7 @@ def classify_case(domain: str, state: dict[str, Any]) -> dict[str, Any]:
     domain = str(domain).strip().lower()
     if domain == "home_assistant":
         service = str(state.get("service", ""))
-        irreversible = not bool(state.get("reversible", True))
+        irreversible = not _boolean(state, "reversible", True)
         sensitive = any(token in service for token in ("unlock", "disarm", "open_cover", "delete"))
         return {"domain": domain, "decision": "human" if irreversible or sensitive else "suggest", "next": "confirm" if irreversible or sensitive else "review"}
     if domain == "research":
@@ -71,7 +71,7 @@ def classify_case(domain: str, state: dict[str, Any]) -> dict[str, Any]:
             return {"domain": domain, "decision": "hold", "next": "add_evidence"}
         return {"domain": domain, "decision": "review", "next": "assess_claim"}
     if domain == "communication":
-        if state.get("creates_commitment"):
+        if _boolean(state, "creates_commitment", False):
             return {"domain": domain, "decision": "review", "next": "record_commitment"}
         return {"domain": domain, "decision": "suggest", "next": "communication_review"}
     if domain in {"infrastructure", "docker", "nas"}:
@@ -83,6 +83,12 @@ def classify_case(domain: str, state: dict[str, Any]) -> dict[str, Any]:
     if domain in {"health", "medical"}:
         return {"domain": domain, "decision": "human", "next": "professional_review"}
     return {"domain": domain, "decision": "review", "next": "jev_workflow"}
+
+
+def _boolean(state: dict[str, Any], key: str, default: bool) -> bool:
+    """Accept policy booleans only as actual JSON booleans."""
+    value = state.get(key, default)
+    return value if isinstance(value, bool) else default
 
 
 def record_outcome(review_id: str, correct: bool, details: dict[str, Any] | None = None) -> str:

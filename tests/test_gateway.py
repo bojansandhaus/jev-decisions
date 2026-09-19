@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT))
 
 import gateway  # noqa: E402
 import closed_loop  # noqa: E402
+import verification  # noqa: E402
+import ingest  # noqa: E402
 from tools import public_scan  # noqa: E402
 
 
@@ -46,6 +48,31 @@ def test_domain_classification_is_conservative() -> None:
     assert gateway.classify_case("research", {})["decision"] == "hold"
     assert gateway.classify_case("health", {})["decision"] == "human"
     assert gateway.classify_case("communication", {"creates_commitment": True})["next"] == "record_commitment"
+
+
+def test_policy_does_not_treat_string_booleans_as_authority() -> None:
+    assert gateway.decide({"external": "false", "reversible": "false"})["decision"] == "observe"
+    assert gateway.classify_case("communication", {"creates_commitment": "false"})["next"] == "communication_review"
+
+
+def test_observation_verification_requires_expected_state() -> None:
+    assert verification.verify_observation("paperless", {}, "healthy")["next"] == "compare_expected"
+    assert verification.verify_observation("paperless", {"expected_status": "healthy"}, "healthy")["verified"] is True
+    assert verification.verify_observation("home_assistant", {"expected_state": "off"}, {"state": "on"})["verified"] is False
+
+
+def test_tool_results_correlate_concurrent_same_name_by_invocation(monkeypatch) -> None:
+    opened = iter(("case-a", "case-b"))
+    closed = []
+    monkeypatch.setattr(ingest, "open_case", lambda *args, **kwargs: next(opened))
+    monkeypatch.setattr(ingest, "close_case", lambda case, *args, **kwargs: closed.append(case))
+    ingest._ACTIVE_CASES.clear()
+    ingest._ACTIVE_INVOCATIONS.clear()
+    ingest.ingest_event("hermes", "tool_call", {"tool_name": "same", "invocation_id": "a"})
+    ingest.ingest_event("hermes", "tool_call", {"tool_name": "same", "invocation_id": "b"})
+    assert ingest.update_tool_result("same", {}, True, "b") == "case-b"
+    assert ingest.update_tool_result("same", {}, True, "a") == "case-a"
+    assert closed == ["case-b", "case-a"]
 
 
 def test_public_scan_passes() -> None:

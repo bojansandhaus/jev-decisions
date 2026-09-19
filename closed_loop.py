@@ -5,7 +5,10 @@ changing execution authority. It produces deterministic calibration signals.
 """
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,14 +27,16 @@ def _path() -> Path:
 
 def _append(kind: str, payload: dict[str, Any], record_id: str | None = None) -> str:
     timestamp = datetime.now(timezone.utc).isoformat()
-    import hashlib
-    basis = json.dumps({"kind": kind, "payload": payload, "timestamp": timestamp}, sort_keys=True, default=str)
-    record_id = record_id or hashlib.sha256(basis.encode()).hexdigest()[:16]
+    record_id = record_id or uuid.uuid4().hex[:16]
     record = {"id": record_id, "kind": kind, "timestamp": timestamp, **payload}
     if kind == "decision":
         record["decision_id"] = record_id
     with _path().open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     return record_id
 
 
@@ -94,7 +99,7 @@ def record_outcome(decision_id: str, status: str, success: bool | None, evidence
     return {"outcome_id": outcome_id, "decision_id": decision_id, "kind": "outcome"}
 
 
-def label_outcome(decision_id: str, success: bool, evidence: Any, labeler: str = "beau", notes: str = "") -> dict[str, Any]:
+def label_outcome(decision_id: str, success: bool, evidence: Any, labeler: str = "user", notes: str = "") -> dict[str, Any]:
     label_id = _append("outcome_label", {
         "decision_id": decision_id,
         "success": bool(success),

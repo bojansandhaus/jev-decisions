@@ -29,6 +29,7 @@ py-modules = [
     "ledger",
     "runtime",
     "shadow_report",
+    "verification",
 ]
 
 [project.scripts]

@@ -1,3 +1,11 @@
+<p align="center">
+  <strong>README</strong> ·
+  <a href="docs/reference.md"><strong>Technical reference</strong></a> ·
+  <a href="docs/integrations.md">Integration guide</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="LICENSE">MIT license</a>
+</p>
+
 <div align="center">
   <h1>Jev Decisions Plugin for Hermes (and other AI Agents)</h1>
   <p><strong>Help Hermes check its plans and its work.</strong></p>
@@ -39,6 +47,45 @@ It is useful when you trust Hermes to work independently but want closer checks 
 
 The plugin includes 25 prepared reviews. You do not need to learn their formats to try them: ask Hermes to use the appropriate Jev review and explain the result. See the [full review catalog](docs/reference.md#prepared-review-catalog) when you want a particular check.
 
+## Put it to work on a real task
+
+A useful review changes what happens next. Ask Hermes to bring back the issue, the evidence, and a concrete correction, rather than merely announce that another model agreed.
+
+### Before a change: find the missing step
+
+> Before changing these files, use Jev's `plan_review` on your proposed steps. Include what I authorized, how you will preserve the originals, and how you will check the saved result. Show me any gaps before you proceed.
+
+Hermes prepares the plan and submits the relevant details. Jev assesses it. If recovery or verification is missing, Hermes can revise the plan before any file is touched. Your original permission limits still apply.
+
+### Before a report: separate facts from assumptions
+
+> Use `evidence_review` on this draft and the sources you actually read. Then tell me which important claims still need support. Do not invent a citation to fill a gap.
+
+Supply the source excerpts as well as the draft. A bibliography alone does not let a reviewer compare a claim with what the source says. This is particularly useful when a polished answer mixes observed facts with plausible guesses.
+
+### After a change: check the result, not the promise
+
+> Read the exact record you changed. Compare it with my request, then use `action_verify` to review the result. Tell me what matched, what did not, and what you could not check.
+
+The order matters: perform the authorized action, collect evidence, then review. Asking a model to judge a success message without reading the target adds another opinion, not proof.
+
+### Later: find out whether the decision helped
+
+> Use `jev_loop` to record this decision and what would count as success. When I bring back the result, attach it to the same decision. Leave the outcome unknown until we have evidence.
+
+That gives a recurring choice a history. You can inspect whether a maintenance recommendation fixed the symptom or whether a purchasing decision met the original requirements. Keep sensitive details out of the record unless you intend to store them locally.
+
+## Choose how much checking you want
+
+<table>
+<tr><th>Start here</th><th>What you get</th><th>What to expect</th></tr>
+<tr><td><strong>One requested review</strong></td><td>A focused check discussed in your conversation.</td><td>Ask Hermes to use the named review. Model reviews require OpenRouter.</td></tr>
+<tr><td><strong>Local checks only</strong></td><td>Fixed rules for approval and supplied verification evidence.</td><td>No model request. Hermes must supply accurate facts; these rules do not interpret the whole task.</td></tr>
+<tr><td><strong>Automatic observation</strong></td><td>Review records around tool activity and answers.</td><td>Opt in explicitly. Additional requests, records, and delay are possible; commands are not blocked.</td></tr>
+</table>
+
+For most people, one explicit review before an important change is the best starting point. Leave routine, harmless questions alone. Add more checks only when they answer a question you actually care about.
+
 ## What is Jev?
 
 [Jev 1.13](https://openrouter.ai/typesafe/jev-1.13) is a decision model made by **TypeSafe**. It reads the information supplied to it and answers focused questions: how likely something is to be true, which option fits, or how something scores against a set of criteria. It returns those answers with numbers that express uncertainty. It does not write chat replies or explanations.
@@ -55,7 +102,17 @@ Read more from the sources:
 
 This is an independent, community maintained plugin by Bojan Sandhaus. Jev is TypeSafe's model; OpenRouter provides the API used here. This repository is not an official release from either company.
 
+## Decision history and local reports
+
+You can keep a decision, attach later observations, label the outcome, and reopen it when new evidence changes the picture. Ask Hermes to use `jev_loop` and keep the decision ID so follow-up entries stay connected. Unknown outcomes remain unknown; the journal does not quietly count them as failures.
+
+For a direct state comparison, ask `jev_loop` to use `verify_observation` with the expected value and an actual readback. An available device is not necessarily in the state you requested. The comparison checks the values supplied to it; Hermes must still read the correct target.
+
+Supporting Python commands provide case lists, commitment candidates, and review summaries. They help inspect the records behind a conversation. They are not a separate graphical dashboard, and private infrastructure collectors are not included in the public package. See [tool actions](docs/reference.md#tool-actions-and-records) and [reports](docs/reference.md#reports-and-supporting-commands) for the exact interfaces.
+
 ## Install in Hermes
+
+**Platform note:** this release uses POSIX journal locking. Linux is tested in CI. On Windows, use a Linux environment such as WSL; native Windows support is not verified and the locking module is unavailable there.
 
 You need Git, Python 3.10 or newer, and a Hermes installation with plugin support. In a terminal, run:
 
@@ -124,7 +181,35 @@ Enabling them can send excerpts of requests, answers, and tool activity to OpenR
 
 The [security guide](SECURITY.md) and [integration guide](docs/integrations.md) explain these boundaries. For this early release, test unfamiliar workflows with harmless examples before using them around consequential work. CI checks the code and installation; it does not certify every model judgment or integration.
 
+## Read the result without overreading it
+
+A completed review should help you decide what to inspect or change. Ask Hermes for a short account:
+
+- **What was reviewed?** The actual plan, draft, or observed result supplied to Jev.
+- **What needs attention?** A missing permission, unsupported claim, incomplete result, or unresolved uncertainty.
+- **What happens next?** A specific check or revision, within the authority you already granted.
+
+Jev returns answers and probabilities, not an explanation of its reasoning. Hermes can relate those answers to the supplied material, but that explanation is Hermes's interpretation. Neither model should turn a probability into a statement that it has directly observed the world.
+
+A review that finds no issue is still bounded by its input. If the source was stale, the target was wrong, or crucial details were omitted, agreement tells you little. Fix the input rather than repeating the same question until you get a reassuring answer.
+
 ## Frequently asked questions
+
+### What should I try first if I only have a few minutes?
+
+Run the harmless local backup check in [Try it in a conversation](#try-it-in-a-conversation). It confirms that Hermes can call the plugin without a provider key. Then review a short synthetic plan with `plan_review` to test the OpenRouter connection. Neither example needs permission to change your files.
+
+### Should I ask for a review on every task?
+
+Usually not. Start with tasks where an error would cost time, money, privacy, or trust. Check an outgoing commitment or a consequential file change before adding reviews to routine questions. Automatic observation is optional and can be noisy; more records do not necessarily mean better decisions.
+
+### What if Jev and my main model disagree?
+
+Ask Hermes to identify the disputed question and show the relevant evidence. Recheck the source or target when possible. If the dispute concerns your intent or permission, ask you. Neither model wins simply because it is more confident.
+
+### How can I report a problem without exposing my data?
+
+Reduce it to a synthetic example that still reproduces the problem. Include the plugin revision, Hermes version, tool or workflow name, expected result, and the sanitized error. Never attach your API key, complete conversation archive, or raw private journals. Follow [CONTRIBUTING.md](CONTRIBUTING.md); use the guidance in [SECURITY.md](SECURITY.md) for security concerns.
 
 ### Do I need to replace the model I use with Hermes?
 

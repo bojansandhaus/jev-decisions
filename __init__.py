@@ -41,6 +41,10 @@ _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 _MODEL = "typesafe/jev-1.13"
 
 
+class _ProviderSchemaError(RuntimeError):
+    """The provider answered, but not with the typed Decisions shape."""
+
+
 def _hooks_enabled() -> bool:
     """Enable networked observer hooks only when explicitly opted in."""
     return os.environ.get("JEV_ENABLE_HOOKS", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -111,8 +115,10 @@ def _request(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
             with urlopen(req, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
             if not isinstance(result, dict) or not isinstance(result.get("answers"), dict):
-                raise RuntimeError("OpenRouter Jev response has no valid answers map")
+                raise _ProviderSchemaError("OpenRouter Jev response has no valid answers map")
             return result
+        except _ProviderSchemaError:
+            raise
         except HTTPError as exc:
             last_error = exc
             if exc.code not in (429, 500, 502, 503, 504) or attempt == 2:
@@ -585,12 +591,16 @@ JEV_LOOP_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["record_decision", "record_observation", "record_outcome", "label_outcome", "reopen", "assess", "list"]},
+            "action": {"type": "string", "enum": ["record_decision", "record_observation", "record_outcome", "label_outcome", "reopen", "verify_observation", "assess", "list"]},
             "decision_id": {"type": "string"},
             "question": {"type": "string"},
             "chosen": {"type": "string"},
             "options": {"type": "array"},
             "evidence": {},
+            "result": {},
+            "expected": {},
+            "expected_state": {},
+            "expected_status": {},
             "assumptions": {"type": "array"},
             "owner": {"type": "string"},
             "deadline": {"type": "string"},
@@ -622,10 +632,12 @@ def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
             if raw_success is not None and not isinstance(raw_success, bool):
                 raise ValueError("success must be boolean or omitted")
             result = loop_record_outcome(args["decision_id"], args.get("status", "unknown"), raw_success, args.get("evidence"), args.get("notes", ""))
+        elif action == "verify_observation":
+            result = verify_observation(args.get("source", "unknown"), args, args.get("result"))
         elif action == "label_outcome":
             if not isinstance(args.get("success"), bool):
                 raise ValueError("label_outcome requires boolean success")
-            result = loop_label_outcome(args["decision_id"], args["success"], args.get("evidence"), args.get("labeler", "beau"), args.get("notes", ""))
+            result = loop_label_outcome(args["decision_id"], args["success"], args.get("evidence"), args.get("labeler", "user"), args.get("notes", ""))
         elif action == "reopen":
             result = loop_reopen(args["decision_id"], args.get("reason", "new contradictory evidence"), args.get("evidence"))
         elif action == "assess":

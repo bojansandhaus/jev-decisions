@@ -1,8 +1,10 @@
 """Small append-only ledger for Jev outcomes, commitments, and decisions."""
 from __future__ import annotations
 
-import hashlib
+import fcntl
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,13 +23,16 @@ def _path() -> Path:
 
 def append(kind: str, payload: dict[str, Any]) -> str:
     timestamp = datetime.now(timezone.utc).isoformat()
-    basis = json.dumps({"kind": kind, "payload": payload, "timestamp": timestamp}, sort_keys=True, default=str)
-    record_id = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    record_id = uuid.uuid4().hex[:16]
     record = {"id": record_id, "kind": kind, "timestamp": timestamp, **payload}
     if kind == "review":
         record["review_id"] = record_id
     with _path().open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True, default=str) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     return record_id
 
 
