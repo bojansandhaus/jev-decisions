@@ -1,56 +1,55 @@
-# Jev Decisions
+# Jev Decisions for Hermes (and other AI agents)
 
-### A typed judgment layer for Hermes and other AI agents
-
+[![CI](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml/badge.svg)](https://github.com/bojansandhaus/jev-decisions/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 
-Jev Decisions gives an agent a small, explicit boundary between **judgment** and **execution**.
+Jev Decisions is a small safety layer for AI agents. It helps an agent decide whether to act, ask for approval, wait for proof, or stop before it changes something.
 
-Use it when an agent must answer questions such as:
+It works as a **Hermes plugin** and as a **standalone Python or command line tool** for other AI agents, automation scripts, and agent frameworks.
 
-- Is this action safe to suggest?
-- Does the evidence prove that the action succeeded?
-- Is this output grounded and complete?
-- Which option is best supported?
-- Should the agent act, ask one question, wait for evidence, or stop?
+## The use case in one minute
 
-Jev supplies typed judgments. Deterministic code retains authority. The project never executes a model recommendation.
+An AI agent can read a request, choose a tool, and report success too quickly. Jev Decisions adds a second opinion and a firm local check:
 
-> **Status:** v0.1.0, usable now for Hermes plugins, Python agents, shell workflows, and service integrations. Keep Jev advisory until your own labeled evaluation supports stronger automation.
-
-## The boundary
-
-```mermaid
-flowchart LR
-    A[Agent state] --> B[Bounded question]
-    B --> C[Jev typed judgment]
-    C --> D[Recommendation]
-    D --> E{Deterministic gateway}
-    E -->|observe| F[Continue]
-    E -->|suggest| G[Propose reversible action]
-    E -->|human| H[Require confirmation]
-    G --> I[Execute elsewhere]
-    I --> J[Read back exact target]
-    J --> K[Verify evidence]
+```text
+Agent sees a task
+        ↓
+Jev asks: what is the risk, and is the evidence enough?
+        ↓
+Local safety rules choose: observe, suggest, or ask a human
+        ↓
+The agent acts only when its own authority allows it
+        ↓
+The exact target is read back and checked
 ```
 
-The model answers a narrow question. Your agent decides what authority is required. Your integration performs the action. Your integration reads the target back and checks the result.
+Examples:
 
-## Why it exists
+- Before deleting a backup, require human approval.
+- Before restarting a service, check whether the action is reversible.
+- After sending a message, check the actual delivery result instead of trusting a success claim.
+- Before saving a memory, check whether it is useful, sensitive, or already known.
+- Before sending an answer, check whether it answers the question and stays grounded in evidence.
+- When an agent keeps revisiting the same choice, identify the next concrete step.
 
-Agent systems tend to fail at the seams. They act on weak evidence, confuse a claim with proof, retain private material forever, or continue analyzing after the next action is clear.
+Jev Decisions does not run actions on its own. It gives the agent a recommendation and keeps the final authority in ordinary code and human approval.
 
-Jev Decisions turns those seams into named, inspectable decisions. Each decision has a bounded input, a typed output, a recorded authority, and a visible next step.
+## Why use it?
 
-The project has two layers:
+Use Jev Decisions when your AI agent can:
 
-1. **Semantic judgment:** Jev evaluates bounded state through Noul, Choice, or Score questions.
-2. **Execution boundary:** local deterministic rules classify risk and verification requirements. They do not defer authority to the model.
+- call tools or APIs,
+- change files, services, or online records,
+- send messages,
+- save memories,
+- make purchases or recommendations,
+- work with private information,
+- claim that a task is complete.
+
+The project gives those moments a shared safety language. The same checks can sit behind Hermes, a Python agent, a shell script, an MCP tool, or another agent framework.
 
 ## Install in Hermes
-
-Clone the project into the Hermes plugin directory:
 
 ```bash
 git clone https://github.com/bojansandhaus/jev-decisions.git \
@@ -60,55 +59,55 @@ hermes plugins enable jev-decisions
 hermes plugins doctor jev-decisions
 ```
 
-Restart Hermes after installing or changing plugin code. The plugin registers the `jev` toolset, five tools, and three advisory hooks without modifying Hermes core.
+Restart Hermes after installing or changing the plugin. The plugin adds five tools and three review hooks without changing Hermes core.
 
-Configure the provider key through Hermes secret management or the environment. Never put a live key in this repository:
+Set the provider key through Hermes secret management or your environment. Keep it outside the repository:
 
 ```bash
-export OPENROUTER_API_KEY="..."
+export OPENROUTER_API_KEY="your-key"
 ```
 
-The provider defaults are:
+The default provider settings are:
 
 ```text
 Endpoint: https://openrouter.ai/api/alpha/decisions
 Model:    typesafe/jev-1.13
 ```
 
-The Hermes adapter reads `OPENROUTER_API_KEY` through the active Hermes secret scope when available. It sends only the bounded state supplied by the caller. Redact credentials, private correspondence, full archives, and unnecessary personal data before creating state.
+## Use with another AI agent
 
-## Use from any Python agent
-
-The repository is not tied to Hermes at the policy boundary. Install it into a Python environment:
+The safety checks do not depend on Hermes. Install the project in a virtual environment:
 
 ```bash
+python3 -m venv .venv
+. .venv/bin/activate
 python3 -m pip install .
 ```
 
-The standalone package exposes the deterministic gateway through Python modules and a command line program:
+Ask whether an action should need a human:
 
 ```bash
 jev-gateway decide <<'JSON'
-{"action":"restart_service","external":true,"reversible":true}
+{"action":"delete_backup","external":true}
 JSON
 ```
 
-Expected shape:
+The command returns a structured answer like this:
 
 ```json
 {
   "authority": "deterministic_policy",
-  "decision": "suggest",
+  "decision": "human",
   "reason": {
     "credential": false,
-    "destructive": false,
+    "destructive": true,
     "external": true,
     "reversible": true
   }
 }
 ```
 
-Verify a state change:
+Check whether a change is actually proven:
 
 ```bash
 jev-gateway verify <<'JSON'
@@ -116,7 +115,7 @@ jev-gateway verify <<'JSON'
 JSON
 ```
 
-The gateway returns `read_back` until the exact target has been inspected:
+The result tells the agent to read the exact target back before calling the change complete:
 
 ```json
 {
@@ -126,7 +125,7 @@ The gateway returns `read_back` until the exact target has been inspected:
 }
 ```
 
-You can also call it from Python:
+Python agents can call the same boundary directly:
 
 ```python
 from gateway import decide, verify
@@ -137,159 +136,174 @@ policy = decide({
     "reversible": True,
 })
 
-verification = verify({
+if policy["decision"] == "human":
+    raise RuntimeError("Human approval is required")
+
+# The host agent performs its approved action here.
+result = verify({
     "changed": True,
     "read_back": True,
     "evidence": True,
 })
+
+assert result["verified"] is True
 ```
 
-This gives other agent frameworks a stable, provider independent safety boundary. To add Jev semantic judgments, call the Decisions API from your framework, then pass the result through the same local policy and verification boundary. See [docs/integrations.md](docs/integrations.md).
+The host agent remains responsible for credentials, permissions, retries, tool execution, and user approval. Jev Decisions supplies the decision check and the proof check.
+
+See [docs/integrations.md](docs/integrations.md) for Python, shell, service, MCP, and other agent integrations.
 
 ## Hermes tools
 
-| Tool | Purpose |
+| Tool | Plain-English purpose |
 | --- | --- |
-| `jev_decide` | Run a custom typed Noul, Choice, or Score judgment. |
-| `jev_workflow` | Run one of the reusable bounded workflows. |
-| `jev_gateway` | Apply deterministic policy, verification, classification, or snapshot operations. |
-| `jev_ingest` | Classify a bounded event from another system and open a Jev case. |
-| `jev_ledger` | Record reviews, outcomes, commitments, decisions, and local metrics. |
+| `jev_decide` | Ask a clear yes or no question, choose between options, or give a score. |
+| `jev_workflow` | Run a ready-made review for a common agent situation. |
+| `jev_gateway` | Check whether an action needs approval and whether a result is proven. |
+| `jev_ingest` | Turn an event from another system into a reviewable case. |
+| `jev_ledger` | Record reviews and outcomes without storing private conversation text. |
 
-### Advisory hooks
+### Hermes review hooks
 
-| Hook | Review |
+| Hook | What it checks |
 | --- | --- |
-| `pre_tool_call` | Prospective tool risk and verification depth. |
-| `post_tool_call` | Whether returned evidence proves success. |
-| `post_llm_call` | Grounding, completeness, actionability, risk, and decision circling. |
+| `pre_tool_call` | Whether a planned tool call looks risky and how much checking it needs. |
+| `post_tool_call` | Whether the tool result proves that the requested change worked. |
+| `post_llm_call` | Whether an answer is grounded, complete, useful, and moving forward. |
 
-Hooks run in shadow mode. They observe and record. They do not block, rewrite, approve, deny, or execute.
+These hooks observe and record recommendations. They do not secretly approve, deny, rewrite, or execute anything.
 
-## Typed questions
+## Common use cases
 
-Jev accepts a map of named questions. Every question declares a type, instructions, and criteria.
+### Safer tool use
+
+Before an agent changes a server, file, service, device, or online record, review the risk. Destructive, credential related, or hard to reverse actions require a human.
+
+### Proof after an action
+
+A tool saying “success” is not proof. Read the exact target back. Check the result. Record what happened.
+
+### Better answers
+
+Review an answer before it reaches the user. Check that it uses the supplied evidence, answers every requested part, and gives a concrete next step when one is needed.
+
+### Memory review
+
+Before saving information, check whether it is useful later, sensitive, redundant, or in conflict with existing memory.
+
+### Research and evidence
+
+Classify a claim as observed, inferred, assumed, unverified, or contradicted. Ask for stronger evidence when the claim matters.
+
+### Communication review
+
+Before sending an email or message, check the recipient, commitment, sensitive information, and whether the draft is ready to send.
+
+### Infrastructure and home automation
+
+Review service changes, backups, restores, alerts, Home Assistant events, and other operations through the same action and verification rules.
+
+### Decisions and comparisons
+
+Compare options, rank candidates, review purchases, or referee multiple agent answers without allowing the model to perform the final action.
+
+## Ready-made reviews
+
+The plugin includes 25 reusable reviews:
+
+| Area | Reviews |
+| --- | --- |
+| Goals and answers | `goal_judge`, `output_review`, `next_action`, `decision_circling`, `plan_review` |
+| Tools and actions | `command_review`, `action_verify`, `tool_result_verify`, `verification_depth`, `escalation` |
+| Memory and evidence | `memory_gate`, `memory_review`, `memory_maintenance`, `recall_rerank`, `claim_status`, `evidence_review` |
+| Choices | `agent_referee`, `option_select`, `purchase_review` |
+| Operations | `anomaly_review`, `daily_anomaly`, `infrastructure_review`, `document_quality` |
+| Communication | `communication_review`, `promotion_review` |
+
+These reviews accept bounded information. They do not require separate connectors for every service or domain.
+
+## How the questions work
+
+A Jev question has a type, clear instructions, and definitions for the possible answers.
 
 ```json
 {
   "state": {
-    "action": "restart_service",
+    "action": "send_email",
     "external": true,
-    "reversible": true
+    "creates_commitment": true
   },
   "questions": {
-    "risk": {
-      "type": "choice",
-      "instructions": "What is the operational risk?",
+    "ready": {
+      "type": "noul",
+      "instructions": "Is this message ready to send?",
       "criteria": {
-        "low": "Read only or easily reversible",
-        "medium": "Recoverable service or file change",
-        "high": "Destructive, credential related, or broad outage risk"
+        "true": "The recipient, commitment, and facts are clear",
+        "false": "Something important needs review first"
       }
     },
-    "needs_human": {
-      "type": "noul",
-      "instructions": "Should a human confirm before execution?",
+    "recommendation": {
+      "type": "choice",
+      "instructions": "What should happen next?",
       "criteria": {
-        "true": "Authority or safety is materially uncertain",
-        "false": "The action is clear, authorized, reversible, and verified"
+        "send": "Send it",
+        "revise": "Revise it first",
+        "ask": "Ask one clarifying question",
+        "hold": "Do not send yet"
       }
     }
   }
 }
 ```
 
-The primitives are:
+The three question types are:
 
-- **Noul:** calibrated true or false judgment.
-- **Choice:** selection from named options.
-- **Score:** placement on an ordered rubric.
+- **Noul:** yes or no, with a confidence estimate.
+- **Choice:** one option from a named list.
+- **Score:** a position on an ordered scale.
 
-Jev returns structured answers, probabilities, and usage metadata. The adapter does not ask Jev for prose.
+The answer is structured data. Your agent decides what to do with it.
 
-## Workflow catalog
+## Safety rules
 
-The plugin ships 25 reusable workflow definitions:
+The local gateway returns one of three policy decisions:
 
-| Area | Workflows |
-| --- | --- |
-| Output and progress | `goal_judge`, `output_review`, `next_action`, `decision_circling`, `plan_review` |
-| Tools and actions | `command_review`, `action_verify`, `tool_result_verify`, `verification_depth`, `escalation` |
-| Memory and evidence | `memory_gate`, `memory_review`, `memory_maintenance`, `recall_rerank`, `claim_status`, `evidence_review` |
-| Comparison and choice | `agent_referee`, `option_select`, `purchase_review` |
-| Operations | `anomaly_review`, `daily_anomaly`, `infrastructure_review`, `document_quality` |
-| Communication and promotion | `communication_review`, `promotion_review` |
+- `observe`: no outside change is involved.
+- `suggest`: a reversible outside action may be proposed.
+- `human`: approval is required.
 
-These are decision classes, not hard coded integrations. Home Assistant, infrastructure, document systems, research, communication, purchasing, and personal workflows can pass bounded state through the same boundary.
+After a change, verification returns:
 
-## Deterministic authority
-
-The gateway is deliberately stricter than the model:
-
-```python
-from gateway import decide, verify
-
-policy = decide({
-    "action": "delete_backup",
-    "external": True,
-})
-assert policy["decision"] == "human"
-
-check = verify({
-    "changed": True,
-    "read_back": False,
-    "evidence": False,
-})
-assert check["next"] == "read_back"
-```
-
-Policy outcomes:
-
-- `observe`: no external effect is present.
-- `suggest`: a reversible external action may be proposed.
-- `human`: confirmation is required.
-
-Verification outcomes:
-
-- `done`: no further proof is required.
+- `done`: the available proof is enough.
 - `read_back`: inspect the exact target.
-- `inspect_evidence`: examine logs or equivalent direct evidence.
+- `inspect_evidence`: examine logs or another direct source of proof.
 
-The gateway never runs the requested operation.
+A model answer never overrides these checks. A missing provider, timeout, malformed answer, or unclear result is not permission to act.
 
-## Cases, ledger, and calibration
+## Privacy
 
-The append only ledger records structured metadata for reviews, outcomes, commitments, and decisions. It is designed for local calibration, not for storing private conversation transcripts.
+Send the smallest amount of information needed for the question. Do not send credentials, private messages, full archives, or unrelated personal information.
 
-The case layer can classify bounded events from domains such as infrastructure, Home Assistant, documents, research, communication, purchases, and health. It records a case state and outcome without requiring a domain specific connector.
-
-The default path is advisory:
-
-1. The agent creates bounded, redacted state.
-2. Jev returns typed answers.
-3. The gateway applies deterministic policy.
-4. The agent executes only within its own authority model.
-5. The agent reads the exact target back.
-6. The ledger records the outcome for later evaluation.
-
-Keep Jev in shadow mode until labeled outcomes show that a workflow is reliable enough for your use case.
-
-## Privacy and security
-
-The public project contains code, generic fixtures, and documentation only. It must never contain:
+Never commit:
 
 - API keys, tokens, passwords, or secret files
-- Hermes sessions, logs, memory, or local calibration records
-- personal names, addresses, identifiers, or private case data
-- generated bytecode, caches, or machine specific configuration
+- private conversations, sessions, memories, or local logs
+- personal addresses, identifiers, or case records
+- caches, bytecode, or machine specific settings
 
-Run the scanner before every release or push:
+Run the public scan before every release:
 
 ```bash
 python3 tools/public_scan.py
 ```
 
-Read [SECURITY.md](SECURITY.md) before sending state to an external model provider. Treat every model answer as untrusted data. Keep human confirmation and deterministic checks in front of irreversible actions.
+Read [SECURITY.md](SECURITY.md) for the complete security policy.
+
+## Local records and calibration
+
+The ledger stores structured review and outcome metadata so you can measure whether a review is useful. It is not a transcript store.
+
+Keep the system advisory while you collect labeled outcomes. Promote one narrow review at a time only when your own results show that the fallback remains safe.
 
 ## Development
 
@@ -300,37 +314,57 @@ python3 -m compileall -q .
 python3 tools/public_scan.py
 ```
 
-The normal test suite makes no network request. A live provider check is optional and requires an API key supplied outside the repository.
+The test suite makes no network request. A live provider test is optional and must use a key outside the repository.
+
+## Answers to common questions
+
+### What is Jev Decisions?
+
+Jev Decisions is a safety and verification layer for AI agents. It helps an agent decide when to act, when to ask a human, and how to check that an action really worked.
+
+### Does it work with Hermes?
+
+Yes. It is packaged as a Hermes plugin with five tools and three advisory hooks.
+
+### Does it work with other AI agents?
+
+Yes. The local policy and verification gateway works from Python, the shell, a service, or another agent framework. Only the plugin registration layer is Hermes specific.
+
+### Does it execute actions?
+
+No. The host agent performs actions. Jev Decisions reviews the proposed action and checks the evidence afterward.
+
+### Does it replace human approval?
+
+No. Destructive, credential related, unclear, or difficult to reverse actions remain subject to human approval.
+
+### Does it store my conversations?
+
+The public project is designed to store structured metadata, not raw conversation text. Your host agent controls what state is sent to the provider.
+
+### Which provider does the Hermes plugin use?
+
+The default is OpenRouter's Decisions API with `typesafe/jev-1.13`. Other agent frameworks can use the local gateway with their own provider or model.
 
 ## Repository layout
 
 ```text
 jev-decisions/
-├── __init__.py       Hermes plugin entrypoint and typed workflows
-├── gateway.py        Deterministic policy and verification
-├── ledger.py         Append only local records
-├── ingest.py         Cross system event classification
-├── fabric.py         Jev case queue
-├── jev_gateway.py    JSON gateway for non Hermes callers
+├── __init__.py       Hermes plugin and review definitions
+├── gateway.py        Local action and verification rules
+├── ledger.py         Local structured records
+├── ingest.py         Event classification
+├── fabric.py         Case queue
+├── jev_gateway.py    JSON command line gateway
 ├── shadow_report.py  Review and calibration report
 ├── plugin.yaml       Hermes manifest
-├── runtime.py        Hermes or standalone runtime bridge
+├── runtime.py        Hermes and standalone runtime bridge
 ├── tools/            Public safety scanner
-├── tests/            Generic behavior tests
+├── tests/            Generic tests
 ├── docs/             Integration guidance
-└── pyproject.toml    Python package metadata and CLI entrypoint
+└── pyproject.toml    Python package and CLI metadata
 ```
-
-## Design principles
-
-1. Keep model judgments typed and bounded.
-2. Keep execution authority deterministic.
-3. Require human authority for destructive or uncertain actions.
-4. Verify state changes against the exact target.
-5. Store structured evidence, not private raw content.
-6. Promote narrow workflows only after labeled evaluation.
-7. Keep the public project free of local state.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. Copyright (c) 2026 Bojan Sandhaus. See [LICENSE](LICENSE).

@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jev-decisions"
 version = "0.1.0"
-description = "Typed Jev decisions with a deterministic safety boundary"
+description = "Safety checks that help Hermes and other AI agents decide when to act, ask, or verify"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-authors = [{name = "Jev Decisions contributors"}]
+authors = [{name = "Bojan Sandhaus"}]
 dependencies = []
 
 [project.optional-dependencies]
