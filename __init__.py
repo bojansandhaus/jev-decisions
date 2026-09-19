@@ -467,6 +467,7 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
         "event": "jev_tool_result_verify",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "tool_name": tool_name,
+        "case_id": case_id,
         "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
         "result_chars": len(result_text),
     }
