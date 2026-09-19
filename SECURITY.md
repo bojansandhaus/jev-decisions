@@ -1,17 +1,16 @@
-# Security policy
+# Security
 
-## Scope
-
-This project handles bounded state sent to an external model provider. It does not execute model recommendations and does not provide authentication for callers.
+Jev Decisions reviews actions and checks evidence. It does not execute model recommendations and it does not provide authentication for callers.
 
 ## Safe use
 
-- Keep API keys in environment variables or a secret manager.
-- Do not send credentials, private correspondence, full archives, or unnecessary personal data as state.
-- Treat every model answer as untrusted data.
-- Keep deterministic policy and user confirmation in front of irreversible actions.
-- Read back state changing operations from the exact target.
+- Keep API keys and passwords in a secret manager or environment variable.
+- Send the provider only the smallest amount of information needed for the question.
+- Do not send private correspondence, full archives, credentials, or unrelated personal data.
+- Treat every model answer as a recommendation, never as permission.
+- Keep human approval in front of destructive or difficult to reverse actions.
+- Read the exact target back after every state changing operation.
 
-## Reporting
+## Report a security problem
 
-Do not open a public issue for a suspected secret, credential exposure, or exploitable vulnerability. Contact the repository owner privately through GitHub security reporting if enabled, or remove the secret from active systems and rotate it before making a public report.
+Do not publish a suspected secret or security weakness in a public issue. Contact the repository owner privately through GitHub security reporting if enabled. Rotate exposed credentials before discussing the incident publicly.

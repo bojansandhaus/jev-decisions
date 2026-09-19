@@ -1,11 +1,15 @@
 # Contributing
 
-Keep changes small, typed, testable, and provider neutral where possible.
+Jev Decisions is a safety layer for Hermes and other AI agents. Keep changes small, clear, testable, and safe to run outside Hermes.
 
-1. Run `python3 -m pytest -q`.
-2. Run `python3 -m compileall -q .`.
-3. Run `python3 tools/public_scan.py`.
-4. Do not commit `.env`, logs, session files, caches, credentials, or private fixtures.
-5. Keep Jev advisory. Do not add code that executes a model recommendation.
+Before opening a pull request:
 
-Use conventional commit prefixes such as `feat:`, `fix:`, `docs:`, `test:`, and `chore:`.
+```bash
+python3 -m pytest -q
+python3 -m compileall -q .
+python3 tools/public_scan.py
+```
+
+Do not commit keys, passwords, private conversations, local logs, session files, caches, or private test data. Do not add code that lets a model recommendation execute an action without the host agent's authority checks.
+
+Use commit prefixes such as `feat:`, `fix:`, `docs:`, `test:`, and `chore:`. Explain the user problem your change solves and include a generic example when the behavior changes.
