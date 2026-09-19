@@ -497,7 +497,7 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     return None
 
 
-def _on_pre_tool_call(tool_name: str = "", args: Any = None, **_: Any) -> None:
+def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str | None = None, **_: Any) -> None:
     """Classify prospective tool risk in shadow mode before execution."""
     if not tool_name:
         return None
