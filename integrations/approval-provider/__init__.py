@@ -1,9 +1,7 @@
-"""jev-approvals — TypeSafe's Jev decision model as Hermes' smart-approval reviewer.
+"""jev-approvals, an OpenRouter only Jev smart approval reviewer.
 
-The PLUGIN is `jev-approvals` (what it does); the PROVIDER it registers is `typesafe-jev`
-(what goes in `auxiliary.approval.provider`). Those are independent: providers/ discovery
-only checks `kind: model-provider` and imports the directory, and the ProviderProfile below
-decides the provider name.
+The plugin is `jev-approvals`; the provider it registers is
+`jev-decisions-approval` (the value used in `auxiliary.approval.provider`).
 
 APPROVALS ONLY. This provider serves exactly one auxiliary task
 (`auxiliary.approval`) and refuses everything else, because Jev emits no strings and
@@ -24,25 +22,17 @@ running through core's real _smart_approve:
 each auxiliary task's provider from config (agent/auxiliary_client.py::
 _resolve_task_provider_model) and accepts plugin-registered providers.
 
-TWO ROUTES, selected by `base_url` — no plugin-specific config:
+ONE ROUTE, selected by OpenRouter's base URL:
 
-    # TypeSafe direct (default)
     auxiliary:
       approval:
-        provider: typesafe-jev
-        model: jev-latest
-
-    # via OpenRouter, which also hosts Jev at the same published price
-    auxiliary:
-      approval:
-        provider: typesafe-jev
+        provider: jev-decisions-approval
         model: ~typesafe/jev-latest
         base_url: https://openrouter.ai/api/alpha
         key_env: OPENROUTER_API_KEY
 
-Core passes `api_key` and `base_url` to `create_client` (auxiliary_client.py:5128), and
-leaves both URLs untouched, so the endpoint is derived from the host: `openrouter.ai` uses
-`/decisions`, anything else `/systemone`. Both return the identical typed answer shape.
+Core passes `api_key` and `base_url` to `create_client`. This adapter accepts only
+`openrouter.ai` and always uses the typed `/decisions` endpoint.
 """
 from __future__ import annotations
 
@@ -66,22 +56,16 @@ PROVIDER_NAME = "jev-decisions-approval"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/alpha"
 SENTINEL_ENV = "OPENROUTER_API_KEY"
 
-# Route table: host -> (decision endpoint, model-list URL, model-list JSON key).
-# OpenRouter proxies the same model and bills the same published rate, but on a different
+# OpenRouter proxies the model and exposes it through its typed decisions endpoint.
 # path with a different model namespace, and its decision models are absent from the plain
 # /v1/models list — `?output_modalities=decisions` is the filter that finds them
 # (`?providers=TypeSafe` is accepted but matches nothing).
 _OPENROUTER_HOST = "openrouter.ai"
-# host -> (hermes provider whose credential pool holds the key, default key env var).
-# Only aggregators that front Jev; the TypeSafe host is not here (it uses TYPESAFE_API_KEY).
-# `settings.key_env` overrides the env var name, so a future aggregator that Hermes has no
-# provider entry for still works from config alone.
-_AGGREGATORS = {_OPENROUTER_HOST: ("openrouter", "OPENROUTER_API_KEY")}
+# OpenRouter hosts Jev and owns the credential pool.
 _ROUTES = {
     _OPENROUTER_HOST: ("/decisions",
                        "https://openrouter.ai/api/v1/models?output_modalities=decisions",
                        "data"),
-    None: ("/systemone", "https://api.typesafe.ai/v1/models", "models"),
 }
 
 # The command text leaves this machine. Cap it so a heredoc or a generated pipeline cannot
@@ -213,50 +197,17 @@ def _setting(key: str, default: Any = None) -> Any:
 
 
 def _route_for(base_url: str) -> Tuple[str, str, str]:
-    """(decision endpoint, models URL, models JSON key) for a base_url's host.
-
-    ponytail: derive the route from the host instead of adding a `route:` setting — one
-    fewer knob to keep in sync, and a future third host works by pointing base_url at it.
-    """
+    """Return OpenRouter's typed route, refusing every other host."""
     host = (urllib.parse.urlparse(base_url or DEFAULT_BASE_URL).hostname or "").lower()
-    for known, route in _ROUTES.items():
-        if known and host.endswith(known):
-            return route
-    return _ROUTES[None]
+    if not host.endswith(_OPENROUTER_HOST):
+        raise RuntimeError(f"{PROVIDER_NAME}: only OpenRouter is supported")
+    return _ROUTES[_OPENROUTER_HOST]
 
 
 def _api_key(base_url: str = "") -> str:
-    """Resolve the key the way Hermes does, not just from os.environ.
-
-    ponytail: try core's resolver first, fall back to the environment. `hermes auth add
-    typesafe-jev` stores the credential in auth.json / .env, and a client that only reads
-    os.environ ignores it — the plugin appeared to require a manual `export`, which was a
-    bug, not a design.
-
-    A non-TypeSafe host means an aggregator is fronting Jev, and its key is NOT the TypeSafe
-    one. The key can never come from `auxiliary.approval.api_key`/`key_env`: a key set
-    beside `base_url` in task config collapses the provider to "custom"
-    (auxiliary_client.py, `if cfg_base_url and cfg_api_key`) and this plugin is bypassed.
-    So the aggregator's credential is resolved here instead — from its own Hermes pool
-    entry, then from `settings.key_env`, then from that variable in the environment.
-    """
-    host = (urllib.parse.urlparse(base_url or "").hostname or "").lower()
-    aggregator = _aggregator_for(host)
-    if aggregator:
-        provider, default_env = aggregator
-        key = _key_from_runtime_provider(provider)
-        if key:
-            return key
-        env_var = str(_setting("key_env", default_env) or "").strip()
-        key = (os.environ.get(env_var) or "").strip() if env_var else ""
-        if key:
-            return key
-        raise RuntimeError(
-            f"No {provider} credential found for the {host} Jev route. Run "
-            f"`hermes auth add {provider}`, or set {env_var or '<key env var>'} in "
-            f"~/.hermes/.env, or name the variable in "
-            f"`plugins.entries.{PLUGIN_ID}.settings.key_env`.")
-    for resolve in (lambda: _key_from_runtime_provider(PROVIDER_NAME), _key_from_dotenv):
+    """Resolve the OpenRouter credential from Hermes or its environment."""
+    _route_for(base_url)
+    for resolve in (lambda: _key_from_runtime_provider("openrouter"), _key_from_dotenv):
         try:
             key = resolve()
         except Exception:
@@ -267,22 +218,8 @@ def _api_key(base_url: str = "") -> str:
     if key:
         return key
     raise RuntimeError(
-        f"No TypeSafe credential found. Run `hermes auth add {PROVIDER_NAME}` "
-        f"(or set {SENTINEL_ENV} in ~/.hermes/.env).")
-
-
-def _aggregator_for(host: str) -> Optional[Tuple[str, str]]:
-    """(hermes provider name, default key env var) when `host` is a known aggregator.
-
-    ponytail: one table entry per aggregator that fronts Jev. Today only OpenRouter ships
-    a decisions endpoint; when another appears, add its host here and the credential path
-    already works. `settings.key_env` overrides the default variable name without a code
-    change, which is the part an unknown future aggregator actually needs.
-    """
-    for known, entry in _AGGREGATORS.items():
-        if host.endswith(known):
-            return entry
-    return None
+        f"No OpenRouter credential found. Run `hermes auth add openrouter` "
+        f"or set {SENTINEL_ENV} in the active Hermes secret scope.")
 
 
 def _key_from_runtime_provider(requested: str) -> str:
@@ -470,9 +407,8 @@ class JevClient:
         self.is_closed = True
 
     def _default_model(self) -> str:
-        """The route's own default: OpenRouter namespaces Jev under `~typesafe/`."""
-        endpoint, _, _ = _route_for(self.base_url)
-        return "~typesafe/jev-latest" if endpoint == "/decisions" else "jev-latest"
+        """The OpenRouter namespace for Jev decision models."""
+        return "~typesafe/jev-latest"
 
     # ponytail: one awaitable wrapper, not an async client. HERMES_SKIP_ASYNC_WRAP means
     # core hands this same object to async callers, so create() must be awaitable there.
@@ -600,7 +536,6 @@ def _record(row: Dict[str, Any]) -> None:
 def fetch_decision_models(base_url: str = "", api_key: str = "") -> List[str]:
     """Live model ids for this route. Never raises — it runs during provider discovery.
 
-    TypeSafe:   GET /v1/models                                   -> {"models":[{"name":...}]}
     OpenRouter: GET /v1/models?output_modalities=decisions        -> {"data":[{"id":...}]}
     The OpenRouter filter matters: decision models are absent from the unfiltered list, and
     `?providers=TypeSafe` is accepted but matches nothing. Without it we would pull all 447
@@ -610,13 +545,11 @@ def fetch_decision_models(base_url: str = "", api_key: str = "") -> List[str]:
     resolved); otherwise the route's own resolution runs.
     """
     _, models_url, key = _route_for(base_url)
-    field = "id" if key == "data" else "name"
+    field = "id"
     try:
         req = urllib.request.Request(models_url)
-        # TypeSafe's /v1/models needs auth; OpenRouter's public list does not.
-        if key != "data":
-            req.add_header("Authorization",
-                           f"Bearer {str(api_key).strip() or _api_key(base_url)}")
+        req.add_header("Authorization",
+                       f"Bearer {str(api_key).strip() or _api_key(base_url)}")
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.load(resp)
         ids = [str(m.get(field) or "") for m in (payload.get(key) or []) if isinstance(m, dict)]
@@ -643,8 +576,7 @@ def _build_profile():
             (hermes_cli/models.py::_profile_live_catalog), so a bare `fetch_models(self)`
             raises TypeError there and the provider lists nothing. `base_url` is what
             selects the route, so `hermes models` shows the OpenRouter ids when the aux
-            task points at OpenRouter and the TypeSafe ids otherwise. **_ absorbs future
-            kwargs rather than breaking again.
+            task points at OpenRouter. **_ absorbs future kwargs rather than breaking again.
             """
             return (fetch_decision_models(base_url, api_key=api_key)
                     or list(self.fallback_models))
@@ -657,14 +589,14 @@ def _build_profile():
         aliases=(),
         display_name="TypeSafe Jev (smart approvals only)",
         description="System One decision model — for auxiliary.approval, not chat",
-        signup_url="https://console.typesafe.ai/settings/keys",
+        signup_url="https://openrouter.ai/settings/keys",
         env_vars=(SENTINEL_ENV,),
         base_url=DEFAULT_BASE_URL,
         auth_type="api_key",
         supports_health_check=True,      # /v1/models answers
         supports_model_listing=True,
         supports_vision=False,
-        fallback_models=("jev-latest", "jev-preview"),
+        fallback_models=("~typesafe/jev-latest", "~typesafe/jev-preview"),
     )
 
 

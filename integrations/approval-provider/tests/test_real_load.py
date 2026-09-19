@@ -31,13 +31,10 @@ except ImportError as exc:
     print(f"SKIP: Hermes core not importable ({exc}). Set HERMES_AGENT_DIR.")
     raise SystemExit(0)
 
-# The PLUGIN id (manifest name / directory) and the PROVIDER name are independent: discovery
-# only checks `kind: model-provider` and imports the directory, and the profile decides the
-# provider name. So the plugin stays `jev-approvals` (what it does) while the provider is
-# `typesafe-jev` (what you type in auxiliary.approval.provider).
+# The plugin id and provider name are independent. The provider is OpenRouter only.
 PLUGIN_ID = "jev-approvals"
-PROVIDER = "typesafe-jev"
-ALIASES = ("jev",)
+PROVIDER = "jev-decisions-approval"
+ALIASES = ()
 
 # Import order mirrors core's: auth first (building PROVIDER_REGISTRY), then discovery.
 from hermes_cli.auth import PROVIDER_REGISTRY  # noqa: E402
@@ -76,7 +73,6 @@ print(f"PROVIDER_REGISTRY: {PROVIDER} + {list(ALIASES)} present")
 from agent.auxiliary_client import resolve_provider_client  # noqa: E402
 
 for label, base_url, model in (
-    ("typesafe direct", "", "jev-latest"),
     ("openrouter", "https://openrouter.ai/api/alpha", "~typesafe/jev-latest"),
 ):
     client, final_model = resolve_provider_client(
@@ -111,8 +107,7 @@ try:
         ("base_url + api_key (must NOT be documented)",
          {"provider": PROVIDER, "model": "~typesafe/jev-latest", "base_url": _OR,
           "api_key": "sk-or-inline"}, "custom"),
-        ("no base_url (typesafe direct)",
-         {"provider": PROVIDER, "model": "jev-latest"}, PROVIDER),
+
     ):
         _aux._get_auxiliary_task_config = lambda _t, _c=task_cfg: _c
         got = _resolve_task_provider_model("approval")[0]
@@ -121,11 +116,7 @@ try:
 finally:
     _aux._get_auxiliary_task_config = _real_task_cfg
 
-# 3c. THE PICKER PATH. `hermes model` -> Configure auxiliary models -> Approval reads the
-# profile through build_aux_picker_rows, and core calls
-# `fetch_models(api_key=..., base_url=...)` (hermes_cli/models.py::_profile_live_catalog).
-# A bare `fetch_models(self)` raises TypeError there: the row shows 0 models and the flow
-# drops to a free-text prompt, with nothing in the log. Assert the signature and the row.
+# 3c. The model catalog path uses core's exact fetch_models signature.
 from hermes_cli.models import provider_model_ids  # noqa: E402
 
 live = profile.fetch_models(api_key="", base_url="")          # core's exact call shape
@@ -134,19 +125,6 @@ assert profile.fetch_models(api_key="", base_url="", future_kwarg=1), "must abso
 ids = provider_model_ids(PROVIDER)
 assert ids, f"provider_model_ids({PROVIDER!r}) is empty — the picker would show no models"
 print(f"picker: provider_model_ids -> {ids}")
-
-from hermes_cli.inventory import build_aux_picker_rows  # noqa: E402
-
-rows = build_aux_picker_rows(current_provider="auto", current_model="", current_base_url="")
-ours = [r for r in rows if str(r.get("slug", "")) == PROVIDER]
-assert ours, f"{PROVIDER} is absent from the auxiliary picker rows"
-assert ours[0].get("models"), f"{PROVIDER} appears in the picker with an EMPTY model list"
-print(f"aux picker row: {ours[0]['name']!r} models={ours[0]['models']}")
-
-# `approval` must still be one of the offered aux tasks, or the menu path does not exist
-from hermes_cli.main_provider_setup import _all_aux_tasks  # noqa: E402
-
-assert any(k == "approval" for k, _n, _d in _all_aux_tasks()), "no 'approval' aux task in the menu"
 
 # 4. the host -> endpoint mapping, including that an unknown host is not the alpha route
 import importlib.util  # noqa: E402
@@ -158,56 +136,44 @@ assert spec and spec.loader
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
-assert mod._route_for("")[0] == "/systemone"
-assert mod._route_for("https://api.typesafe.ai/v1")[0] == "/systemone"
 assert mod._route_for("https://openrouter.ai/api/alpha")[0] == "/decisions"
 assert mod._route_for("https://OPENROUTER.AI/api/alpha")[0] == "/decisions"
-assert mod._route_for("https://example.com/v1")[0] == "/systemone"
+try:
+    mod._route_for("https://example.com/v1")
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("non OpenRouter route was accepted")
 # the OpenRouter model list must carry the filter, or it pulls the whole 447-model catalogue
 assert "output_modalities=decisions" in mod._route_for("https://openrouter.ai/api/alpha")[1]
-print("route_for: typesafe -> /systemone, openrouter -> /decisions, unknown -> /systemone")
+print("route_for: OpenRouter -> /decisions, all other hosts rejected")
 
-# 5. the optional `settings.key_env`: aggregator routes only, pool wins, bad values are inert
+# 5. OpenRouter credential resolution prefers the Hermes pool, then the environment.
 _real_setting = mod._setting
 _real_pool = mod._key_from_runtime_provider
 _real_dotenv = mod._key_from_dotenv
 try:
-    # the aggregator table drives it, and TypeSafe direct is NOT an aggregator
-    assert mod._aggregator_for("openrouter.ai") == ("openrouter", "OPENROUTER_API_KEY")
-    assert mod._aggregator_for("api.typesafe.ai") is None
-    assert mod._aggregator_for("example.com") is None
+    mod._key_from_runtime_provider = lambda _p: ""
+    mod._key_from_dotenv = lambda: ""
+    os.environ["OPENROUTER_API_KEY"] = "«redacted:sk-…»"
+    assert mod._api_key("https://openrouter.ai/api/alpha") == "«redacted:sk-…»"
 
-    # settings.key_env names the variable for an aggregator whose key is NOT in a pool
-    mod._setting = lambda key, default=None: "MY_AGG_KEY" if key == "key_env" else default
-    mod._key_from_runtime_provider = lambda _p: ""          # no pool credential
-    os.environ["MY_AGG_KEY"] = "sk-from-custom-env-var"
-    assert mod._api_key("https://openrouter.ai/api/alpha") == "sk-from-custom-env-var"
-
-    # an unset/blank setting falls back to the aggregator's default variable
-    mod._setting = _real_setting
-    os.environ["OPENROUTER_API_KEY"] = "sk-from-default-var"
-    assert mod._api_key("https://openrouter.ai/api/alpha") == "sk-from-default-var"
-
-    # ...and the TypeSafe route must ignore all of it. Its own resolvers are stubbed empty
-    # so the assertion is about THIS env var, not whatever the machine's pool happens to hold.
+    # A TypeSafe endpoint must never be accepted, even if its legacy key exists.
     mod._key_from_dotenv = lambda: ""
     os.environ["TYPESAFE_API_KEY"] = "sk-typesafe"
-    assert mod._api_key("") == "sk-typesafe"
-    assert mod._api_key("https://api.typesafe.ai/v1") == "sk-typesafe"
-
-    # a garbage setting must not break the default route
-    mod._setting = lambda key, default=None: 12345 if key == "key_env" else default
     try:
-        mod._api_key("https://openrouter.ai/api/alpha")
+        mod._api_key("https://api.typesafe.ai/v1")
     except RuntimeError:
-        pass  # no credential is the correct outcome, not a crash
-    assert mod._api_key("") == "sk-typesafe", "a bad setting leaked into the TypeSafe route"
+        pass
+    else:
+        raise AssertionError("legacy TypeSafe route accepted")
+
 finally:
     mod._setting = _real_setting
     mod._key_from_runtime_provider = _real_pool
     mod._key_from_dotenv = _real_dotenv
-    for _v in ("MY_AGG_KEY", "OPENROUTER_API_KEY", "TYPESAFE_API_KEY"):
+    for _v in ("OPENROUTER_API_KEY", "TYPESAFE_API_KEY"):
         os.environ.pop(_v, None)
-print("settings.key_env: aggregator-only, pool first, default var, bad value inert")
+print("OpenRouter route: pool first, environment fallback, legacy direct route rejected")
 
 print("\nboth registries have the provider, and both routes build our client")

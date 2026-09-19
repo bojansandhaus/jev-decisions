@@ -1,18 +1,12 @@
 name: jev-approvals
 version: "0.2.0"
-# model-provider is required: it is the only kind providers/ discovery imports, and that
-# import is what registers the profile into PROVIDER_REGISTRY (built at hermes_cli.auth
-# import time). A provider registered later — e.g. from register(ctx) under `standalone` —
-# is absent from that registry and resolve_provider_client rejects the name as unknown.
+# model-provider is required because providers/ discovery imports this companion and
+# registers its profile into PROVIDER_REGISTRY during Hermes startup.
 kind: model-provider
-description: "APPROVALS ONLY. Registers Jev as an OpenRouter backed Hermes provider for the single purpose of serving `auxiliary.approval` when `approvals.mode: smart`. Jev returns typed probabilities instead of text, which is the native shape of the guardian's APPROVE/DENY/ESCALATE question. It CANNOT generate text, so it refuses any prompt that is not the smart-approval guardian's; never set it as a chat provider or for any other auxiliary task."
+description: "APPROVALS ONLY. Registers Jev as an OpenRouter backed Hermes provider for `auxiliary.approval` when `approvals.mode: smart`. It refuses chat and unrelated auxiliary tasks, and escalates on unavailable or invalid evidence."
 author: "anpicasso"
 requires_env:
   - OPENROUTER_API_KEY
 python_dependencies: []
 # The provider is intentionally OpenRouter only for this release. Do not add an inline key
 # beside base_url, because Hermes resolves that shape as a generic custom provider.
-config_schema:
-  key_env:
-    type: string
-    description: "Env var holding the API key for a non-TypeSafe (aggregator) base_url. Defaults to the aggregator's own variable — OPENROUTER_API_KEY for openrouter.ai."

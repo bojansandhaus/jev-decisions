@@ -16,6 +16,8 @@ Ask Hermes to run `jev_workflow` with `workflow: approval_review` and bounded st
 
 The companion manifest is in `integrations/approval-provider`. It registers an approval only model provider through Hermes provider discovery. It must not be selected for the main model, ordinary auxiliary tasks, or chat. Activation is a separate setup action and installation does not change `approvals.mode`, `auxiliary.approval`, the main model, or `context.engine`.
 
+When you explicitly activate it, use provider `jev-decisions-approval` with an OpenRouter base URL such as `https://openrouter.ai/api/alpha` and model `~typesafe/jev-latest`. This release rejects direct TypeSafe endpoints and unknown hosts.
+
 Keep the existing Hermes approval settings in force. Before selecting the provider, run the registration and routing tests with a mocked transport, then exercise a harmless flagged command in a fresh Hermes process. Test disabled and manual modes as well as an unavailable key. Do not enable it unattended until representative labeled outcomes show acceptable false approvals and unnecessary escalations.
 
 ## Privacy and attribution

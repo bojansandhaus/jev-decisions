@@ -149,14 +149,14 @@ jev._api_key = lambda base_url="": "test-key"
 for codes, label in ([429], "429"), ([503], "503"), (["net"], "network error"):
     opener, state = failing_urlopen(codes)
     jev.urllib.request.urlopen = opener
-    out = _REAL_POST("https://api.typesafe.ai/v1", {"state": {}}, 30.0)
+    out = _REAL_POST("https://openrouter.ai/api/alpha", {"state": {}}, 30.0)
     assert out["model"] == "jev-1.13.0", out
     assert state["n"] == 2, f"{label} did not retry (attempts={state['n']})"
 
 opener, state = failing_urlopen([401])
 jev.urllib.request.urlopen = opener
 try:
-    _REAL_POST("https://api.typesafe.ai/v1", {"state": {}}, 30.0)
+    _REAL_POST("https://openrouter.ai/api/alpha", {"state": {}}, 30.0)
     raise AssertionError("401 should not be retried, and should raise")
 except RuntimeError as exc:
     assert "401" in str(exc) and "API key" in str(exc), exc
@@ -165,7 +165,7 @@ assert state["n"] == 1, f"401 was retried {state['n']} times"
 opener, state = failing_urlopen([429, 429, 429])
 jev.urllib.request.urlopen = opener
 try:
-    _REAL_POST("https://api.typesafe.ai/v1", {"state": {}}, 30.0)
+    _REAL_POST("https://openrouter.ai/api/alpha", {"state": {}}, 30.0)
     raise AssertionError("exhausted retries must raise so core escalates")
 except RuntimeError:
     pass
