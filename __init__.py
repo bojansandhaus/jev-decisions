@@ -457,6 +457,7 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     if not tool_name:
         return None
     result_text = _safe_text(result)
+    case_id = update_tool_result(tool_name, result_text, verified=False)
     state = {
         "tool_name": tool_name,
         "arguments": _safe_text(args, 5000),
