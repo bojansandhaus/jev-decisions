@@ -23,6 +23,10 @@ except ImportError:
     from ledger import append as append_ledger, metrics as ledger_metrics, read as read_ledger
     from gateway import decide as gateway_decide, verify as gateway_verify, snapshot as gateway_snapshot, classify_case as gateway_classify
 try:
+    from .ingest import ingest_event, update_tool_result
+except ImportError:
+    from ingest import ingest_event, update_tool_result
+try:
     from .closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
 except ImportError:
     from closed_loop import assess as loop_assess, list_records as loop_list, record_decision as loop_record_decision, record_observation as loop_record_observation, record_outcome as loop_record_outcome
