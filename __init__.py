@@ -456,7 +456,7 @@ def _safe_text(value: Any, limit: int = 12000) -> str:
         return _redact_for_review(str(value), limit)
 
 
-def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, **_: Any) -> None:
+def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, invocation_id: str | None = None, **_: Any) -> None:
     """Verify tool results in shadow mode without affecting tool execution."""
     if not tool_name:
         return None
