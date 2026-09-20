@@ -1,6 +1,6 @@
 name: jev-decisions
-version: "0.1.0"
-description: "Jev Decisions Plugin for Hermes (and other AI Agents): action reviews, local policy, and evidence checks"
+version: "0.2.0"
+description: "Jev Decisions Plugin for Hermes: action reviews, local policy, evidence checks, and optional smart approval review"
 author: "Bojan Sandhaus"
 license: MIT
 homepage: "https://github.com/bojansandhaus/jev-decisions"

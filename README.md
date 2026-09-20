@@ -155,6 +155,12 @@ For everyday work, make the review part of your request:
 
 Hermes chooses and calls the tools. If it answers without using them, ask it to make the Jev tool call explicitly. A missing key or failed request means the review did not happen.
 
+## Optional smart approvals
+
+Version 0.2.0 adds an opt in `approval_review` workflow and a companion approval only provider adapted from [anpicasso/hermes-jev-approvals](https://github.com/anpicasso/hermes-jev-approvals). It uses OpenRouter's typed Decisions API and the `OPENROUTER_API_KEY` secret. The provider refuses ordinary chat, never executes commands, and escalates on missing or malformed evidence. Hermes's existing approval policy remains authoritative.
+
+Installation does not select the provider, change `approvals.mode`, or enable native smart approvals. Configure it separately only after reviewing the [approval guide](docs/approvals.md). LCM, context handling, ordinary model routing, and existing tools are unchanged.
+
 ## Optional automatic reviews
 
 Once explicit checks are useful, you can enable reviews before tool calls, after tool results, and after model responses. Start a CLI session with:

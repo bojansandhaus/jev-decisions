@@ -1,0 +1,12 @@
+name: jev-approvals
+version: "0.2.0"
+# model-provider is required because providers/ discovery imports this companion and
+# registers its profile into PROVIDER_REGISTRY during Hermes startup.
+kind: model-provider
+description: "APPROVALS ONLY. Registers Jev as an OpenRouter backed Hermes provider for `auxiliary.approval` when `approvals.mode: smart`. It refuses chat and unrelated auxiliary tasks, and escalates on unavailable or invalid evidence."
+author: "anpicasso"
+requires_env:
+  - OPENROUTER_API_KEY
+python_dependencies: []
+# The provider is intentionally OpenRouter only for this release. Do not add an inline key
+# beside base_url, because Hermes resolves that shape as a generic custom provider.
