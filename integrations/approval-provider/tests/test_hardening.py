@@ -184,8 +184,29 @@ assert verdict_for("rm -rf node_modules",
 # a command judged on a truncated payload is never auto-approved
 assert verdict_for(long_cmd) == "ESCALATE", "truncated command was APPROVEd"
 
+# Policy authorization must not bypass the final confidence/blast checks.
+assert verdict_for("rm -rf node_modules", dict(FULL,
+                   verdict={"choice": "DENY", "confidence": 0.54},
+                   policy_allows={"noul": 0.99}), policy="operator allows this") == "ESCALATE"
+assert verdict_for("rm -rf node_modules", dict(FULL,
+                   blast_radius={"score": 1.6},
+                   policy_allows={"noul": 0.99}), policy="operator allows this") == "ESCALATE"
+for malformed in (True, False, float("nan"), float("inf"), "0.9"):
+    try:
+        verdict_for("git status", dict(FULL,
+                    verdict={"choice": "APPROVE", "confidence": malformed}))
+        raise AssertionError(f"malformed confidence {malformed!r} was accepted")
+    except RuntimeError as exc:
+        assert "confidence" in str(exc), exc
+for malformed in (float("nan"), float("inf"), -float("inf"), True):
+    try:
+        verdict_for("git status", dict(FULL, blast_radius={"score": malformed}))
+        raise AssertionError(f"malformed blast radius {malformed!r} was accepted")
+    except RuntimeError as exc:
+        assert "blast_radius" in str(exc), exc
+
 rows = [json.loads(line) for line in _LOG.read_text().splitlines()]
-assert len(rows) == 4, f"expected 4 records, got {len(rows)}"
+assert len(rows) == 6, f"expected 6 records, got {len(rows)}"
 assert oct(_LOG.stat().st_mode)[-3:] == "600", oct(_LOG.stat().st_mode)
 for row in rows:
     for key in ("verdict", "reason", "blast_radius", "reads_secrets", "confidence",

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -340,6 +341,15 @@ def _noul(answers: Dict[str, Any], key: str) -> float:
     return value
 
 
+def _confidence(answers: Dict[str, Any]) -> float:
+    value = (answers.get("verdict") or {}).get("confidence")
+    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0):
+        raise RuntimeError(f"{PROVIDER_NAME}: verdict confidence must be a finite probability "
+                           f"in [0,1] (got {value!r}); escalating")
+    return float(value)
+
+
 def _extract(messages: List[Dict[str, Any]]) -> Tuple[Optional[str], str, str]:
     """(command, description, operator_policy) from the guardian's messages.
 
@@ -448,11 +458,12 @@ class JevClient:
         # verdict/confidence may default safely: an absent verdict means ESCALATE, which is
         # the conservative direction. The hazard nouls may NOT — see _noul.
         verdict = str((answers.get("verdict") or {}).get("choice") or "ESCALATE").upper()
-        confidence = float((answers.get("verdict") or {}).get("confidence") or 0.0)
+        confidence = _confidence(answers)
         blast_raw = (answers.get("blast_radius") or {}).get("score")
-        if not isinstance(blast_raw, (int, float)) or isinstance(blast_raw, bool):
+        if (not isinstance(blast_raw, (int, float)) or isinstance(blast_raw, bool)
+                or not math.isfinite(float(blast_raw))):
             raise RuntimeError(f"{PROVIDER_NAME}: blast_radius was asked but not answered "
-                               f"(got {blast_raw!r}); escalating")
+                               f"with a finite score (got {blast_raw!r}); escalating")
         blast = float(blast_raw)
         advocating = _noul(answers, "self_advocating")
         policy_ok = _noul(answers, "policy_allows")
@@ -479,12 +490,12 @@ class JevClient:
             verdict, reason = "ESCALATE", f"reads_secrets {reads_secrets:.2f} >= 0.7"
         elif policy_ok >= 0.7 and blast < 2.0 and policy:
             verdict, reason = "APPROVE", f"operator_policy allows ({policy_ok:.2f})"
-        elif verdict == "APPROVE" and (confidence < 0.55 or blast >= 1.6):
+        else:
+            reason = f"model verdict (conf {confidence:.2f})"
+        if verdict == "APPROVE" and (confidence < 0.55 or blast >= 1.6):
             verdict, reason = "ESCALATE", (f"confidence {confidence:.2f} < 0.55"
                                            if confidence < 0.55
                                            else f"blast_radius {blast:.2f} >= 1.6")
-        else:
-            reason = f"model verdict (conf {confidence:.2f})"
         if verdict not in VERDICT_CRITERIA:
             verdict, reason = "ESCALATE", "verdict not one of APPROVE/DENY/ESCALATE"
         # A command too long to send in full was judged on a cut: never auto-approve it.

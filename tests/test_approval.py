@@ -32,6 +32,25 @@ def test_policy_rejects_self_advocacy_before_policy_upgrade():
     assert decision.verdict == "ESCALATE"
 
 
+def test_policy_upgrade_still_requires_confidence_and_blast_checks():
+    low_confidence = apply_policy(
+        answers(policy_allows={"noul": 0.99}, verdict={"choice": "DENY", "confidence": 0.54}),
+        has_policy=True,
+    )
+    high_blast = apply_policy(
+        answers(policy_allows={"noul": 0.99}, blast_radius={"score": 1.6}),
+        has_policy=True,
+    )
+    assert low_confidence.verdict == "ESCALATE"
+    assert high_blast.verdict == "ESCALATE"
+
+
+@pytest.mark.parametrize("confidence", [True, False, float("nan"), float("inf"), -float("inf"), "0.9"])
+def test_policy_rejects_malformed_confidence(confidence):
+    with pytest.raises(ValueError, match="confidence"):
+        apply_policy(answers(verdict={"choice": "APPROVE", "confidence": confidence}), has_policy=False)
+
+
 def test_validation_rejects_missing_answer():
     with pytest.raises(JevSchemaError):
         validate_answers({}, QUESTIONS)
