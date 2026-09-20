@@ -32,6 +32,9 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
+      - name: Test native approval policy regressions
+        run: python -m unittest discover -s integrations/approval-provider/tests -p 'test_policy_regression.py' -v
+
       - name: Compile Python files
         run: python -m compileall -q .
 
