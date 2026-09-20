@@ -1,5 +1,5 @@
 name: jev-decisions
-version: "0.2.0"
+version: "0.2.1"
 description: "Jev Decisions Plugin for Hermes: action reviews, local policy, evidence checks, and optional smart approval review"
 author: "Bojan Sandhaus"
 license: MIT
