@@ -2,11 +2,11 @@
 
 Jev Decisions 0.2.0 includes an approval only companion provider and an advisory `approval_review` workflow. Both are opt in. The provider sees only commands already sent to Hermes's approval gate. It is not a sandbox, command detector, or executor.
 
-## OpenRouter requirement
+## Provider selection
 
-Model reviews and smart approval review require an OpenRouter API key in the active Hermes profile. Store it through the Hermes secret manager or the profile environment as `OPENROUTER_API_KEY`. Never put a key in `config.yaml`, a command argument, a journal, or this repository.
+Model reviews and smart approval review can use TypeSafe directly, OpenRouter, or either provider as a fallback. Set `JEV_PROVIDER_MODE` to one of `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default is `openrouter` for backward compatibility. Store `TYPESAFE_API_KEY` and `OPENROUTER_API_KEY` through the Hermes secret manager or the profile environment. Never put a key in `config.yaml`, a command argument, a journal, or this repository.
 
-The typed endpoint is `https://openrouter.ai/api/alpha/decisions` and the default model is `typesafe/jev-1.13`. A provider outage, missing key, timeout, malformed response, invalid number, unknown enum, or incomplete answer is an unavailable review and must escalate. It never silently approves.
+The direct TypeSafe endpoint is `https://api.typesafe.ai/v1/systemone` with model `jev-1.13.0`. The OpenRouter endpoint is `https://openrouter.ai/api/alpha/decisions` with model `typesafe/jev-1.13`. A fallback is attempted only after the selected primary route fails. A provider outage, missing key, timeout, malformed response, invalid number, unknown enum, or incomplete answer is an unavailable review and must escalate. It never silently approves.
 
 ## Advisory workflow
 

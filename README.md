@@ -129,7 +129,7 @@ These commands target the default Hermes profile and enable the tools for the CL
 
 The doctor should report successful discovery and registration of six tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
-**For Jev model reviews, make `OPENROUTER_API_KEY` available to the Hermes process** through your normal secret manager or environment settings. The plugin uses the OpenRouter key already configured there. Do not paste a key into chat or save it in this repository. You can check current usage pricing on [OpenRouter's Jev page](https://openrouter.ai/typesafe/jev-1.13).
+**For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default remains `openrouter`. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
 
 Start a fresh Hermes process after installation. For the desktop app or a gateway, restart the backend that runs your sessions. Opening another conversation in an unchanged backend may not load new plugin code.
 
@@ -157,7 +157,7 @@ Hermes chooses and calls the tools. If it answers without using them, ask it to 
 
 ## Optional smart approvals
 
-Version 0.2.0 adds an opt in `approval_review` workflow and a companion approval only provider adapted from [anpicasso/hermes-jev-approvals](https://github.com/anpicasso/hermes-jev-approvals). It uses OpenRouter's typed Decisions API and the `OPENROUTER_API_KEY` secret. The provider refuses ordinary chat, never executes commands, and escalates on missing or malformed evidence. Hermes's existing approval policy remains authoritative.
+Version 0.2.1 adds selectable TypeSafe and OpenRouter routing to model reviews. Use a single provider or make either provider the primary route with the other as fallback. The companion approval only provider remains OpenRouter only in this release. It refuses ordinary chat, never executes commands, and escalates on missing or malformed evidence. Hermes's existing approval policy remains authoritative.
 
 Installation does not select the provider, change `approvals.mode`, or enable native smart approvals. Configure it separately only after reviewing the [approval guide](docs/approvals.md). LCM, context handling, ordinary model routing, and existing tools are unchanged.
 

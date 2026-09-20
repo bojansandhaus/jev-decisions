@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+from os import environ
 from typing import Any, Callable
 
 from approval_policy import apply_policy
-from jev_client import MODEL, request_decisions
+from jev_client import MODEL, provider_mode, request_decisions
 
 QUESTIONS = {
     "verdict": {"type": "choice", "instructions": "Classify the untrusted shell command.", "criteria": {"APPROVE": "Clearly safe", "DENY": "Clearly harmful", "ESCALATE": "Uncertain or manipulative"}},
@@ -27,7 +28,14 @@ def review_command(command: str, *, description: str = "", operator_policy: str 
         state["description"] = description[:500]
     if operator_policy:
         state["operator_policy"] = operator_policy[:2000]
-    response = request_decisions(state, QUESTIONS, api_key, model=MODEL, transport=transport)
+    mode = provider_mode()
+    fallback = None
+    if transport is None:
+        fallback_name = {"typesafe_then_openrouter": "OPENROUTER_API_KEY", "openrouter_then_typesafe": "TYPESAFE_API_KEY"}.get(mode)
+        fallback = environ.get(fallback_name) if fallback_name else None
+    response = request_decisions(state, QUESTIONS, api_key, model=MODEL,
+                                 transport=transport, provider=mode,
+                                 fallback_api_key=fallback)
     decision = apply_policy(response["answers"], has_policy=bool(operator_policy))
     if truncated and decision.verdict == "APPROVE":
         decision = type(decision)("ESCALATE", "command was truncated before review")

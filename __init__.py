@@ -40,6 +40,10 @@ try:
     from .approval_policy import apply_policy
 except ImportError:
     from approval_policy import apply_policy
+try:
+    from .jev_client import provider_mode, request_decisions
+except ImportError:
+    from jev_client import provider_mode, request_decisions
 _TOOLSET = "jev"
 _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 _MODEL = "typesafe/jev-1.13"
@@ -96,13 +100,28 @@ JEV_DECIDE_SCHEMA = {
 
 
 def _secret() -> str:
-    value = get_secret("OPENROUTER_API_KEY")
+    mode = provider_mode()
+    primary = "TYPESAFE_API_KEY" if mode.startswith("typesafe") else "OPENROUTER_API_KEY"
+    value = get_secret(primary)
     if not value:
-        raise RuntimeError("OPENROUTER_API_KEY is not available in the active Hermes secret scope")
+        raise RuntimeError(f"{primary} is not available in the active Hermes secret scope")
     return value
 
 
+def _fallback_secret() -> str | None:
+    mode = provider_mode()
+    if mode == "typesafe_then_openrouter": return get_secret("OPENROUTER_API_KEY")
+    if mode == "openrouter_then_typesafe": return get_secret("TYPESAFE_API_KEY")
+    return None
+
+
 def _request(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    if provider_mode() != "openrouter":
+        return request_decisions(
+            payload.get("state"), payload.get("questions", {}), api_key,
+            model=payload.get("model") or _MODEL,
+            provider=provider_mode(), fallback_api_key=_fallback_secret(),
+        )
     body = json.dumps(payload).encode("utf-8")
     req = Request(
         _ENDPOINT,
