@@ -48,7 +48,7 @@ The result should contain `"verified": true` and `"next": "done"`. These inputs 
 
 ## Hermes tools and hooks
 
-The plugin exposes six tools under the `jev` toolset.
+The plugin exposes seven tools under the `jev` toolset.
 
 <table>
 <tr><th>Tool</th><th>Use it for</th><th>Provider required?</th></tr>
@@ -58,6 +58,7 @@ The plugin exposes six tools under the `jev` toolset.
 <tr><td><code>jev_ingest</code></td><td>Open a rule classified case from supplied event data.</td><td>No</td></tr>
 <tr><td><code>jev_ledger</code></td><td>Record reviews, labeled outcomes, commitments, and decisions; inspect metrics.</td><td>No</td></tr>
 <tr><td><code>jev_loop</code></td><td>Link decisions, observations, and outcomes; assess the resulting history.</td><td>No</td></tr>
+<tr><td><code>jev_supervision</code></td><td>Turn admission, adaptive event routing, challenge freshness, and repeated failure controls.</td><td>No</td></tr>
 </table>
 
 The `approval_review` workflow is an opt in advisory check for flagged commands. It returns typed answers and a deterministic applied rule; it never authorizes execution. Configure the optional provider through [the approval guide](approvals.md).
@@ -125,6 +126,31 @@ The comparator trims whitespace and ignores letter case. For an object result it
 ### Event cases: `jev_ingest`
 
 Supply `source`, `event_type`, and a `payload` object. Ingestion routes the event to a domain, applies local classification, and returns a case ID. Python integrations can call `fabric.open_case`, `fabric.close_case`, and `fabric.queue`; queue filters accept status and domain. Tool result correlation uses invocation IDs when supplied. Supply those IDs for overlapping calls to the same tool.
+
+### Local supervision: `jev_supervision`
+
+This tool answers from local state and makes no provider request. Actions:
+
+<table>
+<tr><th>Action</th><th>Effect</th></tr>
+<tr><td><code>status</code></td><td>Bounded telemetry: mode, authority, counters, and the current control.</td></tr>
+<tr><td><code>begin_turn</code> / <code>end_turn</code></td><td>Create or close a supervised turn. Admission is local.</td></tr>
+<tr><td><code>observe_event</code></td><td>Route one structured event and report whether a remote opinion is warranted.</td></tr>
+<tr><td><code>consider_challenge</code></td><td>Record a disagreement. Only high confidence disagreement becomes a challenge.</td></tr>
+<tr><td><code>take_challenge</code></td><td>Take one still-current challenge. A stale one is retained as telemetry instead.</td></tr>
+<tr><td><code>check_control</code></td><td>Ask whether the exact action is under a local control, and whether it may run.</td></tr>
+<tr><td><code>record_tool_outcome</code></td><td>Fingerprint a tool outcome; identical failures accumulate into a control.</td></tr>
+<tr><td><code>allow_retry</code></td><td>Convert an active blocking control into one permitted retry.</td></tr>
+<tr><td><code>configure</code></td><td>Change mode, thresholds, or the repeated failure threshold for this process.</td></tr>
+</table>
+
+Modes are `off`, `shadow`, `correct_next`, and `precommit`. `shadow` is the default and changes no execution. `correct_next` and `precommit` enforce the local control lease through the `pre_tool_call` veto shape, `{"action": "block", "message": ...}`, and only for the exact action fingerprint that created the control.
+
+A control lease can constrain a repeated action. It can never authorize one, and it does not replace approval or verification. Those remain in `jev_gateway`.
+
+Supervised turns are turn scoped and evicted after sixteen tracked turns when no `end_turn` arrives. Fingerprints and counters hold hashes, labels, and counts, never raw arguments or tool results.
+
+Wording in this layer is adapted from `keeltrace/hermes-jev`; see `THIRD_PARTY_NOTICES.md` for the reviewed revision and the upstream license.
 
 ## Reports and supporting commands
 

@@ -44,6 +44,10 @@ try:
     from .jev_client import provider_mode, request_decisions
 except ImportError:
     from jev_client import provider_mode, request_decisions
+try:
+    from . import supervision as _supervision
+except ImportError:
+    import supervision as _supervision
 _TOOLSET = "jev"
 _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 _MODEL = "typesafe/jev-1.13"
@@ -367,6 +371,8 @@ _WORKFLOW_SCHEMA = {
             "workflow": {"type": "string", "enum": list(_WORKFLOW_QUESTIONS)},
             "state": {"description": "Bounded state relevant to the selected workflow."},
             "model": {"type": "string"},
+            "turn_id": {"type": "string", "description": "Optional supervised turn to attach a current challenge from."},
+            "session_id": {"type": "string"},
         },
         "required": ["workflow", "state"],
         "additionalProperties": False,
@@ -374,7 +380,7 @@ _WORKFLOW_SCHEMA = {
 }
 
 
-def jev_workflow_handler(args: dict[str, Any], **_: Any) -> str:
+def jev_workflow_handler(args: dict[str, Any], **kwargs: Any) -> str:
     workflow = args.get("workflow")
     state = args.get("state")
     if workflow not in _WORKFLOW_QUESTIONS:
@@ -387,6 +393,7 @@ def jev_workflow_handler(args: dict[str, Any], **_: Any) -> str:
         if workflow == "approval_review":
             decision = apply_policy(result["answers"], has_policy=bool(isinstance(state, dict) and state.get("operator_policy")))
             output.update({"verdict": decision.verdict, "applied_rule": decision.rule})
+        output["supervision"] = _supervision_delivery(args, kwargs)
         return json.dumps(output)
 
     except Exception as exc:
@@ -470,11 +477,19 @@ def _on_post_llm_call(
     assistant_response: str = "",
     user_message: str = "",
     conversation_history: Any = None,
+    turn_id: str = "",
+    session_id: str = "",
     **_: Any,
 ) -> None:
     """Review final answers in shadow mode without changing or blocking them."""
     if not _hooks_enabled():
         return None
+    turn_key = _supervise_begin(turn_id, session_id, user_message)
+    admission = None
+    if turn_key:
+        turn = _supervision.default_supervision().current_turn(turn_id=turn_key)
+        if turn is not None:
+            admission = turn.admission
     if not assistant_response:
         return None
     request = _redact_for_review(user_message, 4000)
@@ -486,6 +501,7 @@ def _on_post_llm_call(
         "draft_sha256": hashlib.sha256(assistant_response.encode("utf-8")).hexdigest(),
         "draft_chars": len(assistant_response),
         "request_chars": len(user_message),
+        "admission": admission,
     }
     try:
         result = _request(
@@ -512,7 +528,7 @@ def _safe_text(value: Any, limit: int = 12000) -> str:
         return _redact_for_review(str(value), limit)
 
 
-def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, invocation_id: str | None = None, **_: Any) -> None:
+def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, invocation_id: str | None = None, turn_id: str = "", session_id: str = "", **_: Any) -> None:
     """Verify tool results in shadow mode without affecting tool execution."""
     if not _hooks_enabled():
         return None
@@ -526,6 +542,12 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
             verification_source = candidate
             break
     verification = verify_observation(verification_source, args if isinstance(args, dict) else {}, result)
+    turn_key = _supervise_begin(turn_id, session_id, f"{tool_name} {_safe_text(args, 200)}")
+    outcome: dict[str, Any] = {}
+    if turn_key:
+        outcome = _supervision.default_supervision().record_tool_outcome(
+            tool_name=tool_name, args=args, result=result, turn_id=turn_key,
+        )
     result_metadata = {
         "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
         "result_chars": len(result_text),
@@ -551,6 +573,20 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
         "result_sha256": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
         "result_chars": len(result_text),
     }
+    if outcome.get("outcome") == "failure" and outcome.get("assess_remotely") is False:
+        # An equivalent failure already assessed in this turn is deduplicated
+        # locally, so a failing loop stops generating provider calls.
+        record.update({
+            "success": False,
+            "skipped": "equivalent_failure_deduplicated",
+            "failure_count": outcome.get("count"),
+            "action_fingerprint": outcome.get("action_fingerprint"),
+        })
+        try:
+            _write_shadow_record(record)
+        except Exception:
+            return None
+        return None
     try:
         response = _request(
             {"model": _MODEL, "state": state, "questions": _WORKFLOW_QUESTIONS["tool_result_verify"]},
@@ -567,12 +603,41 @@ def _on_post_tool_call(tool_name: str = "", args: Any = None, result: Any = None
     return None
 
 
-def _on_pre_tool_call(tool_name: str = "", args: Any = None, invocation_id: str | None = None, **_: Any) -> None:
-    """Classify prospective tool risk in shadow mode before execution."""
+def _on_pre_tool_call(
+    tool_name: str = "",
+    args: Any = None,
+    invocation_id: str | None = None,
+    turn_id: str = "",
+    session_id: str = "",
+    **_: Any,
+) -> Any:
+    """Classify prospective tool risk before execution.
+
+    The local control lease is consulted first, so a known repeated failure never
+    pays a provider round trip. The only supported veto shape is
+    ``{"action": "block", "message": ...}`` (see
+    ``hermes_cli/plugins.py::_get_pre_tool_call_directive_details``), and it is
+    returned only in an enforcing supervision mode. Shadow mode, the default,
+    always returns ``None`` and cannot change tool execution.
+    """
     if not _hooks_enabled():
         return None
     if not tool_name:
         return None
+    turn_key = _supervise_begin(turn_id, session_id, f"{tool_name} {_safe_text(args, 300)}")
+    if turn_key:
+        control = _supervision.default_supervision().check_control(
+            tool_name=tool_name, args=args, turn_id=turn_key,
+        )
+        if control.get("controlled") and not control.get("allow"):
+            return {
+                "action": "block",
+                "message": (
+                    f"Jev supervision blocked this exact repeated action ({control.get('control')}): "
+                    f"{control.get('reason')}. Take a materially different action, or permit one "
+                    "retry with jev_supervision action=allow_retry."
+                ),
+            }
     case_id = None
     try:
         arguments = _safe_text(args, 5000)
@@ -689,6 +754,196 @@ def jev_loop_handler(args: dict[str, Any], **_: Any) -> str:
         return json.dumps({"error": str(exc)})
 
 
+JEV_SUPERVISION_SCHEMA = {
+    "name": "jev_supervision",
+    "description": (
+        "Inspect or drive the local Jev supervision layer: turn admission, adaptive "
+        "event routing, challenge freshness, and repeated failure controls. Local "
+        "telemetry needs no provider call; deterministic authority is unchanged."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "status", "begin_turn", "end_turn", "observe_event",
+                    "consider_challenge", "take_challenge", "check_control",
+                    "record_tool_outcome", "allow_retry", "configure",
+                ],
+                "description": "Which supervision operation to run.",
+            },
+            "turn_id": {"type": "string", "description": "Supervised turn. Defaults to the session turn."},
+            "session_id": {"type": "string"},
+            "user_message": {"type": "string", "description": "Turn text used for local admission."},
+            "event": {"type": "object", "description": "Structured event for observe_event."},
+            "tool_name": {"type": "string"},
+            "args": {"description": "Tool arguments, used for action fingerprints."},
+            "result": {"description": "Tool result, used for the failure signature."},
+            "hermes_decision": {"type": "string"},
+            "jev_decision": {"type": "string"},
+            "confidence": {"type": "number"},
+            "reason": {"type": "string"},
+            "decision_id": {"type": "string"},
+            "state_version": {"type": "string"},
+            "decision_version": {"type": "string"},
+            "probabilities": {"type": "object"},
+            "mode": {"type": "string", "enum": list(_supervision.SUPERVISION_MODES)},
+            "include_recent": {"type": "boolean"},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _supervision_turn_key(turn_id: str, session_id: str) -> str:
+    """Resolve a stable turn key so supervision state never fragments per call."""
+    if turn_id:
+        return turn_id
+    if session_id:
+        return f"session:{session_id}"
+    return "session:default"
+
+
+def _supervise_begin(turn_id: str, session_id: str, text: str = "") -> str | None:
+    """Lazily ensure a supervised turn exists. Returns the resolved turn key."""
+    if not _hooks_enabled():
+        return None
+    supervision = _supervision.default_supervision()
+    if not supervision.config.enabled:
+        return None
+    key = _supervision_turn_key(turn_id, session_id)
+    supervision.begin_turn(turn_id=key, session_id=session_id or "", user_message=text)
+    return key
+
+
+def _supervision_config_view(config: Any) -> dict[str, Any]:
+    return {
+        "enabled": config.enabled,
+        "mode": config.mode,
+        "admission_enabled": config.admission_enabled,
+        "relevance_threshold": config.relevance_threshold,
+        "challenge_confidence": config.challenge_confidence,
+        "max_provider_calls_per_turn": config.max_provider_calls_per_turn,
+        "repeated_failure_replan_at": config.repeated_failure_replan_at,
+    }
+
+
+def _supervision_delivery(args: dict[str, Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Attach a still-current challenge to a model-visible workflow response.
+
+    A stale challenge is never delivered here; the supervision layer retains it as
+    local telemetry instead. This function reports only and changes nothing.
+    """
+    supervision = _supervision.default_supervision()
+    if not supervision.config.enabled:
+        return {"enabled": False}
+    turn_id = str(args.get("turn_id") or kwargs.get("turn_id") or "")
+    session_id = str(args.get("session_id") or kwargs.get("session_id") or "")
+    if not turn_id and not session_id:
+        turn_id = supervision.latest_turn_id()
+    challenge = None
+    if turn_id or session_id:
+        challenge = supervision.take_challenge(turn_id=turn_id, session_id=session_id)
+    return {
+        "enabled": True,
+        "mode": supervision.mode(),
+        "turn_id": turn_id,
+        "challenge": challenge,
+    }
+
+
+def jev_supervision_handler(args: dict[str, Any], **_: Any) -> str:
+    """Local supervision control. Never executes an action and never grants authority."""
+    action = args.get("action")
+    supervision = _supervision.default_supervision()
+    turn_id = str(args.get("turn_id") or "")
+    session_id = str(args.get("session_id") or "")
+    try:
+        if action == "status":
+            report = supervision.status(
+                turn_id=turn_id,
+                session_id=session_id,
+                include_recent=bool(args.get("include_recent")),
+            )
+            return json.dumps({"success": True, **report}, sort_keys=True, default=str)
+        if action == "begin_turn":
+            result = supervision.begin_turn(
+                turn_id=turn_id,
+                session_id=session_id,
+                user_message=str(args.get("user_message") or ""),
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "end_turn":
+            return json.dumps({"success": True, **supervision.end_turn(turn_id=turn_id, session_id=session_id)}, sort_keys=True, default=str)
+        if action == "observe_event":
+            event = args.get("event")
+            if not isinstance(event, dict):
+                raise ValueError("observe_event requires an event object")
+            result = supervision.observe_event(event, turn_id=turn_id, session_id=session_id)
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "consider_challenge":
+            for key in ("hermes_decision", "jev_decision"):
+                if not isinstance(args.get(key), str) or not args[key].strip():
+                    raise ValueError(f"consider_challenge requires {key}")
+            result = supervision.consider_challenge(
+                hermes_decision=args["hermes_decision"],
+                jev_decision=args["jev_decision"],
+                confidence=args.get("confidence", 0.0),
+                reason=str(args.get("reason") or ""),
+                decision_id=str(args.get("decision_id") or ""),
+                state_version=str(args.get("state_version") or ""),
+                decision_version=str(args.get("decision_version") or ""),
+                probabilities=args.get("probabilities") if isinstance(args.get("probabilities"), dict) else None,
+                turn_id=turn_id,
+                session_id=session_id,
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "take_challenge":
+            challenge = supervision.take_challenge(turn_id=turn_id, session_id=session_id)
+            return json.dumps(
+                {"success": True, "challenge": challenge, "delivered": challenge is not None},
+                sort_keys=True, default=str,
+            )
+        if action == "check_control":
+            if not isinstance(args.get("tool_name"), str):
+                raise ValueError("check_control requires tool_name")
+            result = supervision.check_control(
+                tool_name=args["tool_name"], args=args.get("args"),
+                turn_id=turn_id, session_id=session_id,
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "record_tool_outcome":
+            if not isinstance(args.get("tool_name"), str):
+                raise ValueError("record_tool_outcome requires tool_name")
+            result = supervision.record_tool_outcome(
+                tool_name=args["tool_name"], args=args.get("args"), result=args.get("result"),
+                turn_id=turn_id, session_id=session_id,
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "allow_retry":
+            result = supervision.allow_retry(
+                turn_id=turn_id, session_id=session_id,
+                reason=str(args.get("reason") or "operator_retry"),
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "configure":
+            settable = {
+                "enabled", "mode", "admission_enabled", "relevance_threshold",
+                "challenge_confidence", "max_provider_calls_per_turn",
+                "repeated_failure_replan_at",
+            }
+            changes = {key: value for key, value in args.items() if key in settable}
+            if not changes:
+                raise ValueError("configure requires at least one settable field")
+            config = supervision.configure(**changes)
+            return json.dumps({"success": True, "config": _supervision_config_view(config)}, sort_keys=True, default=str)
+        return json.dumps({"error": "unknown action"})
+    except (KeyError, TypeError, ValueError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
 def register(ctx: Any) -> None:
     ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
     ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
@@ -696,6 +951,7 @@ def register(ctx: Any) -> None:
     ctx.register_tool("jev_gateway", _TOOLSET, JEV_GATEWAY_SCHEMA, jev_gateway_handler, description=JEV_GATEWAY_SCHEMA["description"])
     ctx.register_tool("jev_ingest", _TOOLSET, JEV_INGEST_SCHEMA, jev_ingest_handler, description=JEV_INGEST_SCHEMA["description"])
     ctx.register_tool("jev_loop", _TOOLSET, JEV_LOOP_SCHEMA, jev_loop_handler, description=JEV_LOOP_SCHEMA["description"])
+    ctx.register_tool("jev_supervision", _TOOLSET, JEV_SUPERVISION_SCHEMA, jev_supervision_handler, description=JEV_SUPERVISION_SCHEMA["description"])
     ctx.register_hook("post_llm_call", _on_post_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)

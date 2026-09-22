@@ -127,7 +127,7 @@ hermes plugins doctor jev-decisions
 
 These commands target the default Hermes profile and enable the tools for the CLI. If you use a named profile or a messaging platform, use that profile's plugin directory and tool settings. If the plugin is already installed, follow [the update instructions](#update-or-disable) instead of cloning over it.
 
-The doctor should report successful discovery and registration of six tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
+The doctor should report successful discovery and registration of seven tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
 **For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default remains `openrouter`. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
 
@@ -174,6 +174,31 @@ For a desktop backend or service, set `JEV_ENABLE_HOOKS=1` in that process's env
 Automatic reviews create local records. They do **not** insert a warning into every conversation, rewrite answers, or stop commands. Their records are useful for inspecting agent behavior; ask for an explicit review when you want a result discussed in the chat.
 
 Enabling them can send excerpts of requests, answers, and tool activity to OpenRouter, add delay, and incur charges. Start with non-sensitive tasks. To switch them off, unset the variable or set it to `0`, then restart Hermes.
+
+## Local supervision
+
+Version 0.3.0 adds a supervision layer that runs locally and answers from local state. It makes no provider call of its own. Ask Hermes to use `jev_supervision` to inspect it, or enable the hooks above to run it automatically.
+
+It does four things:
+
+- Labels each turn `OFF`, `WATCH`, or `ON` with a local classifier. This costs nothing and never delays Hermes.
+- Routes structured events through a local relevance score. Routine and repeated equivalent state is suppressed before any provider call is made.
+- Holds a high confidence disagreement as a challenge only while the state it disagrees with is still current. A stale challenge is recorded as telemetry and never delivered as advice.
+- Fingerprints each failed tool action, and after a configurable number of identical failures raises a local `REPLAN` control. The first equivalent failure can be assessed remotely; later identical ones are not, so a failing loop stops generating provider requests.
+
+Supervision is advisory by default. In `shadow` mode it records and reports a control but changes nothing. Only `correct_next` and `precommit` enforce it, and enforcement can do exactly one thing: block the precise repeated action that created the control, until a materially different action follows or one retry is permitted.
+
+Enforcement never authorizes anything. Approval and verification remain in the deterministic gateway, and your existing approval settings stay authoritative.
+
+```bash
+# Observe only. This is the default and it changes no execution.
+export JEV_SUPERVISION_MODE=shadow
+
+# Enforce the local loop breaker for identical repeated failures.
+export JEV_SUPERVISION_MODE=correct_next
+```
+
+Supervision state is turn scoped and needs no provider key. It stays inert until `JEV_ENABLE_HOOKS=1`, matching the automatic review posture above. The `jev_supervision` tool works without that variable because calling it is an explicit request.
 
 ## Privacy and limits
 

@@ -37,3 +37,61 @@ Bojan Sandhaus and distributed under the MIT License in LICENSE.
 
 The release notes quote the upstream copyright statement with attribution.
 The notice above preserves the adapted implementation's license and provenance.
+
+---
+
+hermes-jev
+
+The supervision layer in `supervision.py` is adapted from:
+
+https://github.com/keeltrace/hermes-jev
+
+Reviewed revision: 4feea5ef45aeb301622f18175ed4cf2e068b99bd
+Upstream release at that revision: hermes-jev v0.2.1.1
+Upstream `plugin.yaml` author field at that revision: KeelTrace community
+Upstream license at that revision: MIT, "Copyright (c) 2026 Hermes-Jev contributors"
+
+Adapted behaviors: asynchronous turn admission, a local adaptive relevance router
+with semantic hysteresis and bounded batching, confidence-gated challenge delivery
+that expires with the challenged state, and action and failure fingerprints with a
+provider independent local REPLAN control.
+
+Upstream wording quoted verbatim in `supervision.py` and `docs/releases/0.3.0.md`:
+
+> "Hermes remains the reasoning and execution engine. Jev supervises accountable decisions in parallel..."
+> "The recommended path is the nervous system, not synchronous evaluate-every-tool gating."
+> "Late opinions remain receipts, not commands."
+
+Note for readers: upstream has since renamed and reorganized the project. The
+`hermes-jev` repository now publishes as `nerve` v0.2.2, and its `LICENSE` reads
+"Copyright (c) 2026 Nerve contributors". The quotation wording above is attributed
+to the revision that was actually reviewed, so it may not appear in the current
+upstream tree.
+
+The upstream license, reproduced from that repository:
+
+MIT License
+
+Copyright (c) 2026 Hermes-Jev contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The adapted supervision layer retains those MIT terms. The surrounding Jev
+Decisions plugin is separately Copyright (c) 2026 Bojan Sandhaus and distributed
+under the MIT License in LICENSE.

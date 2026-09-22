@@ -71,6 +71,9 @@ def test_loop_handler_labels_only_on_explicit_label_action(plugin):
 
 
 def test_provider_schema_failure_is_not_retried(monkeypatch, plugin):
+    # Pin the route so this exercises the OpenRouter schema path regardless of
+    # any ambient JEV_PROVIDER_MODE in the developer environment.
+    monkeypatch.setenv('JEV_PROVIDER_MODE', 'openrouter')
     import __init__ as package
     calls = []
 
