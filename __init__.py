@@ -48,6 +48,10 @@ try:
     from . import supervision as _supervision
 except ImportError:
     import supervision as _supervision
+try:
+    from . import lessons as _lessons
+except ImportError:
+    import lessons as _lessons
 _TOOLSET = "jev"
 _ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 _MODEL = "typesafe/jev-1.13"
@@ -624,6 +628,11 @@ def _on_pre_tool_call(
         return None
     if not tool_name:
         return None
+    # A known mistake first: a lesson carries the specific rule, so it is checked
+    # before the generic repeated-failure control. Both are local and free.
+    directive = _lesson_gate(tool_name, args, _supervision.default_supervision().enforcing())
+    if directive is not None:
+        return directive
     turn_key = _supervise_begin(turn_id, session_id, f"{tool_name} {_safe_text(args, 300)}")
     if turn_key:
         control = _supervision.default_supervision().check_control(
@@ -944,6 +953,169 @@ def jev_supervision_handler(args: dict[str, Any], **_: Any) -> str:
         return json.dumps({"error": str(exc)})
 
 
+JEV_LESSONS_SCHEMA = {
+    "name": "jev_lessons",
+    "description": (
+        "Record and manage learned corrections. A lesson is a written rule plus a "
+        "precise description of the mistake as it is about to happen. Severity "
+        "escalates from nudge to kick once the same mistake escapes twice, and a "
+        "lesson that is judged relevant many times without ever catching anything "
+        "retires as noise. Local only: no provider call, and no action is executed."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "add", "list", "get", "edit", "retire", "sweep",
+                    "candidates", "caught", "surfaced", "export", "import", "stats",
+                ],
+                "description": "Which lesson operation to run.",
+            },
+            "text": {"type": "string", "description": "The rule, written as the right way to do it."},
+            "detect": {"type": "string", "description": "The mistake as an action about to happen. Be precise."},
+            "severity": {"type": "string", "enum": list(_lessons.SEVERITIES)},
+            "source": {"type": "string", "description": "Use owner for a hard rule that must never retire."},
+            "scope": {"type": "string"},
+            "evidence": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "kind": {"type": "string", "enum": list(_lessons.KINDS)},
+            "lesson_id": {"type": "string"},
+            "lesson_ids": {"type": "array", "items": {"type": "string"}},
+            "action_text": {"type": "string", "description": "The action to score lessons against."},
+            "escapes": {"type": "integer"},
+            "catches": {"type": "integer"},
+            "reason": {"type": "string"},
+            "min_catches": {"type": "integer"},
+            "from": {"type": "string"},
+            "pack": {"type": "object", "description": "A lesson pack to import."},
+            "include_retired": {"type": "boolean"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _lesson_action_text(tool_name: str, args: Any, limit: int = 600) -> str:
+    """The text lessons are scored against: the tool and what it was given."""
+    return f"{tool_name} {_safe_text(args, limit)}".strip()
+
+
+def _lesson_gate(tool_name: str, args: Any, enforcing: bool) -> dict[str, Any] | None:
+    """Stop an action a kick lesson matches, or note that it would have stopped one.
+
+    A kick lesson is a known mistake, either written by the owner or escalated
+    after it escaped twice. This is local and provider free, and it fires only on
+    a close textual match, so it will miss a paraphrase. In a mode that does not
+    enforce, nothing is stopped and nothing is counted as caught; the match is
+    recorded as evidence instead.
+    """
+    store = _lessons.default_store()
+    hits = store.local_kicks(_lesson_action_text(tool_name, args))
+    if not hits:
+        return None
+    lesson, score = hits[0]
+    if not enforcing:
+        try:
+            store.note_would_kick(lesson.id, tool_name=tool_name, score=score)
+        except Exception:
+            return None
+        return None
+    store.record_surfaced([lesson.id])
+    store.record_caught([lesson.id])
+    return {
+        "action": "block",
+        "message": (
+            f"A Jev lesson blocked this action (lesson {lesson.id}, match {score:.2f}). "
+            f"{lesson.text} Take a different approach, or record why this is not that mistake "
+            "with jev_lessons action=edit."
+        ),
+    }
+
+
+def jev_lessons_handler(args: dict[str, Any], **_: Any) -> str:
+    """Local lesson management. Never executes an action and never calls a provider."""
+    action = args.get("action")
+    store = _lessons.default_store()
+    try:
+        if action == "add":
+            if not isinstance(args.get("text"), str):
+                raise ValueError("add requires text")
+            result = store.add(
+                text=args["text"],
+                detect=str(args.get("detect") or ""),
+                severity=str(args.get("severity") or "nudge"),
+                source=str(args.get("source") or "stated"),
+                scope=str(args.get("scope") or "global"),
+                evidence=str(args.get("evidence") or ""),
+                tags=args.get("tags") if isinstance(args.get("tags"), list) else None,
+                kind=str(args.get("kind") or "lesson"),
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "list":
+            limit = max(1, min(200, int(args.get("limit") or 50)))
+            rows = store.all(include_retired=bool(args.get("include_retired")))[:limit]
+            return json.dumps({"success": True, "lessons": [r.as_dict() for r in rows], "count": len(rows)}, sort_keys=True, default=str)
+        if action == "get":
+            item = store.get(str(args.get("lesson_id") or ""))
+            return json.dumps({"success": True, "lesson": item.as_dict() if item else None}, sort_keys=True, default=str)
+        if action == "edit":
+            result = store.edit(
+                str(args.get("lesson_id") or ""),
+                severity=args.get("severity"),
+                escapes=args.get("escapes"),
+                catches=args.get("catches"),
+                detect=args.get("detect"),
+                text=args.get("text"),
+                scope=args.get("scope"),
+            )
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "retire":
+            result = store.retire(str(args.get("lesson_id") or ""), reason=str(args.get("reason") or "retired by hand"))
+            return json.dumps({"success": True, **result}, sort_keys=True, default=str)
+        if action == "sweep":
+            gone = store.sweep()
+            return json.dumps({"success": True, "retired": gone, "count": len(gone), "stats": store.stats()}, sort_keys=True, default=str)
+        if action == "candidates":
+            text = str(args.get("action_text") or "")
+            if not text:
+                raise ValueError("candidates requires action_text")
+            limit = max(1, min(32, int(args.get("limit") or 8)))
+            scored = store.candidates(text, limit=limit)
+            return json.dumps({
+                "success": True,
+                "candidates": [{"lesson": item.as_dict(), "score": round(score, 4)} for item, score in scored],
+                "count": len(scored),
+                "note": "a shortlist for a semantic judgement, not a verdict",
+            }, sort_keys=True, default=str)
+        if action == "caught":
+            ids = args.get("lesson_ids")
+            if not isinstance(ids, list):
+                raise ValueError("caught requires lesson_ids")
+            return json.dumps({"success": True, "catches": store.record_caught([str(i) for i in ids])}, sort_keys=True, default=str)
+        if action == "surfaced":
+            ids = args.get("lesson_ids")
+            if not isinstance(ids, list):
+                raise ValueError("surfaced requires lesson_ids")
+            return json.dumps({"success": True, "surfaced": store.record_surfaced([str(i) for i in ids])}, sort_keys=True, default=str)
+        if action == "export":
+            pack = store.export_pack(source=str(args.get("from") or ""), min_catches=int(args.get("min_catches") or 1))
+            return json.dumps({"success": True, "pack": pack, "count": len(pack["lessons"])}, sort_keys=True, default=str)
+        if action == "import":
+            pack = args.get("pack")
+            if not isinstance(pack, dict):
+                raise ValueError("import requires a pack object")
+            return json.dumps({"success": True, **store.import_pack(pack)}, sort_keys=True, default=str)
+        if action == "stats":
+            return json.dumps({"success": True, "stats": store.stats()}, sort_keys=True, default=str)
+        return json.dumps({"error": "unknown action"})
+    except (KeyError, TypeError, ValueError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
 def register(ctx: Any) -> None:
     ctx.register_tool("jev_decide", _TOOLSET, JEV_DECIDE_SCHEMA, jev_decide_handler, description=JEV_DECIDE_SCHEMA["description"])
     ctx.register_tool("jev_workflow", _TOOLSET, _WORKFLOW_SCHEMA, jev_workflow_handler, description=_WORKFLOW_SCHEMA["description"])
@@ -952,6 +1124,7 @@ def register(ctx: Any) -> None:
     ctx.register_tool("jev_ingest", _TOOLSET, JEV_INGEST_SCHEMA, jev_ingest_handler, description=JEV_INGEST_SCHEMA["description"])
     ctx.register_tool("jev_loop", _TOOLSET, JEV_LOOP_SCHEMA, jev_loop_handler, description=JEV_LOOP_SCHEMA["description"])
     ctx.register_tool("jev_supervision", _TOOLSET, JEV_SUPERVISION_SCHEMA, jev_supervision_handler, description=JEV_SUPERVISION_SCHEMA["description"])
+    ctx.register_tool("jev_lessons", _TOOLSET, JEV_LESSONS_SCHEMA, jev_lessons_handler, description=JEV_LESSONS_SCHEMA["description"])
     ctx.register_hook("post_llm_call", _on_post_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)

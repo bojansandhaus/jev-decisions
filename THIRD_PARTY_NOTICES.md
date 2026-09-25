@@ -95,3 +95,42 @@ SOFTWARE.
 The adapted supervision layer retains those MIT terms. The surrounding Jev
 Decisions plugin is separately Copyright (c) 2026 Bojan Sandhaus and distributed
 under the MIT License in LICENSE.
+
+---
+
+osENV.io
+
+The lesson lifecycle in `lessons.py` is adapted from the **design** of:
+
+https://github.com/psygns/osENV.io
+
+Reviewed revision: 0ef07457d461a9d9a30e695799f1ab1e329c2a45
+Upstream release at that revision: 0.3.0
+Original author: psygns
+
+NO CODE WAS COPIED FROM THIS PROJECT.
+
+That repository contains no license file. Absent a license, its source is
+all rights reserved, so nothing from it may be redistributed here. Only the
+published design was studied, and `lessons.py` is an independent Python
+implementation of it. No upstream source, identifier, comment, or text was
+copied, and no MIT notice is claimed for it.
+
+Adapted design: a lesson is a written rule plus a precise description of the
+mistake as it is about to happen; severity escalates from advice to a hard stop
+once the same mistake has escaped twice; a lesson judged relevant many times
+without ever catching anything is noise and retires; proven lessons travel
+between installs as a pack.
+
+Upstream wording quoted verbatim in `lessons.py` and `docs/releases/0.4.0.md`,
+for attribution:
+
+> "the same mistake as an existing lesson? Then that lesson is sharpened, and escalates to a kick after 2 escapes, instead of a copy piling up."
+> -- psygns, osENV.io README.md
+
+> "Lessons that Jev keeps calling relevant but that never catch anything are noise: they retire."
+> -- psygns, osENV.io learn.go
+
+Deliberate differences in this implementation: lessons are ranked with a
+deterministic lexical score rather than vector similarity, and a repeat merges on
+a wording match with a manual correction path, rather than on a model judgement.

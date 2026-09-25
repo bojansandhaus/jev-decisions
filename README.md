@@ -127,7 +127,7 @@ hermes plugins doctor jev-decisions
 
 These commands target the default Hermes profile and enable the tools for the CLI. If you use a named profile or a messaging platform, use that profile's plugin directory and tool settings. If the plugin is already installed, follow [the update instructions](#update-or-disable) instead of cloning over it.
 
-The doctor should report successful discovery and registration of seven tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
+The doctor should report successful discovery and registration of eight tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
 **For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default remains `openrouter`. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
 
@@ -199,6 +199,20 @@ export JEV_SUPERVISION_MODE=correct_next
 ```
 
 Supervision state is turn scoped and needs no provider key. It stays inert until `JEV_ENABLE_HOOKS=1`, matching the automatic review posture above. The `jev_supervision` tool works without that variable because calling it is an explicit request.
+
+## Learned corrections
+
+Version 0.4.0 adds a store of written rules that carry a track record. A lesson is a rule plus a precise description of the mistake as it is about to happen, and the second half is what makes it catch anything.
+
+Tell Hermes about a mistake once and it is recorded. If the same mistake is recorded again, the existing lesson is sharpened instead of duplicated, and that repeat counts as an escape. After two escapes the lesson stops being advice and becomes a `kick`. A lesson that keeps being judged relevant without ever catching anything is noise, and it retires on its own.
+
+An owner rule is different. Add one with `source=owner` and it is a hard stop from the moment you make it, and it can never retire.
+
+The local check compares the wording of the action with the wording of the lesson. It is precise on a close match and it misses a paraphrase, which is deliberate: the semantic judgement stays with Jev. In the default `shadow` mode a kick lesson stops nothing at all. The match is written to the ledger as `lesson_would_kick`, so you can see what enforcement would have done before you turn it on.
+
+Proven lessons travel between installs as a pack: export the ones that actually caught something, import them elsewhere, and each imported lesson starts with no track record of its own.
+
+The lifecycle is adapted from the design of psygns's osENV.io. See `THIRD_PARTY_NOTICES.md` for the reviewed revision, the verbatim quotations, and what differs.
 
 ## Privacy and limits
 

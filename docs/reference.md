@@ -48,7 +48,7 @@ The result should contain `"verified": true` and `"next": "done"`. These inputs 
 
 ## Hermes tools and hooks
 
-The plugin exposes seven tools under the `jev` toolset.
+The plugin exposes eight tools under the `jev` toolset.
 
 <table>
 <tr><th>Tool</th><th>Use it for</th><th>Provider required?</th></tr>
@@ -59,6 +59,7 @@ The plugin exposes seven tools under the `jev` toolset.
 <tr><td><code>jev_ledger</code></td><td>Record reviews, labeled outcomes, commitments, and decisions; inspect metrics.</td><td>No</td></tr>
 <tr><td><code>jev_loop</code></td><td>Link decisions, observations, and outcomes; assess the resulting history.</td><td>No</td></tr>
 <tr><td><code>jev_supervision</code></td><td>Turn admission, adaptive event routing, challenge freshness, and repeated failure controls.</td><td>No</td></tr>
+<tr><td><code>jev_lessons</code></td><td>Learned corrections: severity escalation, catch and escape tallies, noise retirement, and lesson packs.</td><td>No</td></tr>
 </table>
 
 The `approval_review` workflow is an opt in advisory check for flagged commands. It returns typed answers and a deterministic applied rule; it never authorizes execution. Configure the optional provider through [the approval guide](approvals.md).
@@ -151,6 +152,32 @@ A control lease can constrain a repeated action. It can never authorize one, and
 Supervised turns are turn scoped and evicted after sixteen tracked turns when no `end_turn` arrives. Fingerprints and counters hold hashes, labels, and counts, never raw arguments or tool results.
 
 Wording in this layer is adapted from `keeltrace/hermes-jev`; see `THIRD_PARTY_NOTICES.md` for the reviewed revision and the upstream license.
+
+### Learned corrections: `jev_lessons`
+
+A lesson is a rule plus a detect line: the mistake described as the action that is about to happen. Actions:
+
+<table>
+<tr><th>Action</th><th>Effect</th></tr>
+<tr><td><code>add</code></td><td>Record a correction. A repeat of an existing lesson merges into it and counts an escape.</td></tr>
+<tr><td><code>list</code> / <code>get</code></td><td>Inspect lessons, including retired ones with <code>include_retired</code>.</td></tr>
+<tr><td><code>edit</code></td><td>Correct a severity, an escape count, a catch count, or the detect line, keeping the record.</td></tr>
+<tr><td><code>retire</code> / <code>sweep</code></td><td>Retire one lesson by hand, or retire every lesson that surfaced 40 or more times without ever catching or escaping.</td></tr>
+<tr><td><code>candidates</code></td><td>Pre-rank lessons against an action. A shortlist for a semantic judgement, not a verdict.</td></tr>
+<tr><td><code>caught</code> / <code>surfaced</code></td><td>Record that a lesson caught a mistake, or that it was judged relevant.</td></tr>
+<tr><td><code>export</code> / <code>import</code></td><td>Move proven lessons between installs as a pack. An imported lesson starts with no track record.</td></tr>
+<tr><td><code>stats</code></td><td>Counts by status, severity, and source.</td></tr>
+</table>
+
+Severity is `nudge` or `kick`. A new lesson is a nudge; a lesson with `source=owner` starts as a kick and is never retired. A nudge becomes a kick once it has escaped twice.
+
+In an enforcing supervision mode, a kick lesson whose wording closely matches an action blocks that action through the same `pre_tool_call` veto shape the control lease uses, and its catch and surfaced tallies are incremented. In `shadow` mode nothing is blocked, nothing is counted as caught, and the match is recorded to the ledger as `lesson_would_kick`.
+
+The local match is lexical, so it is precise on a close match and blind to a paraphrase. That is deliberate: this is a fast local stop and a prefilter, and the semantic judgement stays with Jev through an explicit review.
+
+Recording `surfaced` from the prefilter would inflate the tally and retire good lessons, so only a real judgement counts: a local kick match, or a review that returned which lessons applied.
+
+Design adapted from psygns's osENV.io, with no code copied. See `THIRD_PARTY_NOTICES.md`.
 
 ## Reports and supporting commands
 
