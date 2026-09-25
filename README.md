@@ -208,7 +208,7 @@ Tell Hermes about a mistake once and it is recorded. If the same mistake is reco
 
 An owner rule is different. Add one with `source=owner` and it is a hard stop from the moment you make it, and it can never retire.
 
-The local check compares the wording of the action with the wording of the lesson. It is precise on a close match and it misses a paraphrase, which is deliberate: the semantic judgement stays with Jev. In the default `shadow` mode a kick lesson stops nothing at all. The match is written to the ledger as `lesson_would_kick`, so you can see what enforcement would have done before you turn it on.
+The local check compares the action with the lesson over canonical words, so different ways of naming the same action meet: `remove`, `delete`, `wipe`, and `clear` collapse onto one word, as do `tmp` and `temporary`, `dir` and `folder`, and `-rf` and `recursive`. That means `clear out the temporary decision folder with a recursive delete` now matches a lesson written as `rm -rf /tmp/jevs-decision-store`. What it still cannot catch is an unbounded rephrasing that shares no word with the lesson, which is why the semantic judgement stays with Jev and an explicit review exists. In the default `shadow` mode a kick lesson stops nothing at all. The match is written to the ledger as `lesson_would_kick`, so you can see what enforcement would have done before you turn it on.
 
 Proven lessons travel between installs as a pack: export the ones that actually caught something, import them elsewhere, and each imported lesson starts with no track record of its own.
 

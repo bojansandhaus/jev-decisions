@@ -21,6 +21,16 @@ PARAPHRASE = "clear out the temporary decision folder with a recursive delete"
 
 
 @pytest.fixture
+def lessons(monkeypatch, tmp_path):
+    """The lessons module with its ledger writes redirected into tmp_path."""
+    import ledger
+    monkeypatch.setattr(ledger, "get_hermes_home", lambda: str(tmp_path))
+    import lessons as module
+    monkeypatch.setattr(module, "append_ledger", ledger.append)
+    return module
+
+
+@pytest.fixture
 def plugin(monkeypatch, tmp_path):
     import ledger
     import closed_loop
@@ -196,11 +206,27 @@ def test_a_nudge_lesson_never_blocks(hooked):
     assert hooked._on_pre_tool_call("terminal", {"command": LITERAL}, session_id="s1") is None
 
 
-def test_a_paraphrase_is_not_blocked_locally(hooked):
-    """Documents the limitation: the local gate misses a paraphrase."""
+def test_a_paraphrase_is_now_blocked_locally(hooked):
+    """The gap that used to be documented as a miss is closed for named families."""
     hooked.jev_lessons_handler({"action": "add", "text": LITERAL, "detect": LITERAL, "source": "owner"})
     hooked._supervision.default_supervision().configure(mode="correct_next")
+    directive = hooked._on_pre_tool_call("terminal", {"command": PARAPHRASE}, session_id="s1")
+    assert directive is not None and directive["action"] == "block"
+    assert "lesson" in directive["message"].lower()
+
+
+def test_a_paraphrase_still_stops_nothing_in_shadow(hooked):
+    """Wider reach must not widen authority: shadow still blocks nothing."""
+    hooked.jev_lessons_handler({"action": "add", "text": LITERAL, "detect": LITERAL, "source": "owner"})
     assert hooked._on_pre_tool_call("terminal", {"command": PARAPHRASE}, session_id="s1") is None
+
+
+def test_a_distant_paraphrase_slips_through_the_local_gate(hooked):
+    """The residual limit at the hook level: an unnamed rephrasing is not caught."""
+    hooked.jev_lessons_handler({"action": "add", "text": LITERAL, "detect": LITERAL, "source": "owner"})
+    hooked._supervision.default_supervision().configure(mode="correct_next")
+    distant = "get rid of the scratch area used for the decisions work"
+    assert hooked._on_pre_tool_call("terminal", {"command": distant}, session_id="s1") is None
 
 
 def test_lesson_gate_runs_before_the_repeated_failure_control(hooked):
@@ -216,6 +242,100 @@ def test_hooks_stay_inert_without_the_opt_in(plugin, monkeypatch):
     monkeypatch.delenv("JEV_ENABLE_HOOKS", raising=False)
     plugin.jev_lessons_handler({"action": "add", "text": LITERAL, "detect": LITERAL, "source": "owner"})
     assert plugin._on_pre_tool_call("terminal", {"command": LITERAL}, session_id="s1") is None
+
+
+# -- hardening: the gate must never veto ---------------------------------
+#
+# Hermes resolves a raising or slow pre_tool_call callback as a BLOCK on the
+# user's tool call. These tests pin the abstain behaviour, because a guard that
+# errors must pass the tool through rather than stop the user's work.
+
+
+def test_gate_abstains_when_the_store_raises(hooked, monkeypatch):
+    import lessons as lessons_module
+    store = lessons_module.default_store()
+    monkeypatch.setattr(type(store), "local_kicks", lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")))
+    assert hooked._on_pre_tool_call("terminal", {"command": "ls"}, session_id="s1") is None
+
+
+def test_gate_failure_is_counted_and_visible(hooked, monkeypatch):
+    import lessons as lessons_module
+    store = lessons_module.default_store()
+    monkeypatch.setattr(type(store), "local_kicks", lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")))
+    hooked._on_pre_tool_call("terminal", {"command": "ls"}, session_id="s1")
+    monkeypatch.undo()
+    stats = _call(hooked, action="stats")
+    assert stats["gate"]["count"] >= 1
+    assert "OSError" in stats["gate"]["last"]
+
+
+def test_gate_abstains_on_a_corrupt_store_file(hooked, tmp_path):
+    store_dir = tmp_path / "jev"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "lessons.json").write_text("{ this is not json")
+    assert hooked._on_pre_tool_call("terminal", {"command": "ls"}, session_id="s1") is None
+
+
+def test_gate_abstains_on_a_hostile_store_file(hooked, tmp_path):
+    store_dir = tmp_path / "jev"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "lessons.json").write_text(json.dumps([
+        "not a dict",
+        {"id": "L1", "text": "valid", "detect": "valid", "severity": "kick", "tags": 5, "catches": "x"},
+        {"text": "no id at all"},
+        42,
+    ]))
+    assert hooked._on_pre_tool_call("terminal", {"command": "ls"}, session_id="s1") is None
+
+
+def test_a_hostile_row_does_not_lose_the_valid_ones(hooked, tmp_path):
+    import lessons as lessons_module
+    store_dir = tmp_path / "jev"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "lessons.json").write_text(json.dumps([
+        "garbage",
+        {"id": "L1", "text": "Keep the tmp store tidy", "detect": "an untidy tmp store", "severity": "catastrophic",
+         "tags": "not a list", "surfaced": "nonsense"},
+    ]))
+    lessons_module._DEFAULT = lessons_module.LessonStore(root=str(store_dir))
+    listed = _call(hooked, action="list")
+    assert listed["count"] == 1
+    lesson = listed["lessons"][0]
+    assert lesson["severity"] == "nudge", "an unknown severity is normalised, not trusted"
+    assert lesson["tags"] == []
+    assert lesson["surfaced"] == 0
+
+
+def test_a_read_only_store_directory_does_not_block_tools(hooked, tmp_path, monkeypatch):
+    import lessons as lessons_module
+    store_dir = tmp_path / "jev"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    store = lessons_module.LessonStore(root=str(store_dir))
+    store.add(text=LITERAL, detect=LITERAL, source="owner")
+    lessons_module._DEFAULT = store
+    hooked._supervision.default_supervision().configure(mode="correct_next")
+    monkeypatch.setattr(type(store), "_save", lambda self: (_ for _ in ()).throw(OSError("read only")))
+    # An enforcing gate that cannot record must still not crash the host.
+    directive = hooked._on_pre_tool_call("terminal", {"command": LITERAL}, session_id="s1")
+    assert directive is None or directive.get("action") == "block"
+
+
+# -- cross-process safety ------------------------------------------------
+
+
+def test_a_stale_in_memory_copy_does_not_drop_another_writers_lesson(lessons, tmp_path):
+    """Two Hermes processes share one store; a write must not clobber the other's."""
+    root = str(tmp_path / "jev")
+    first = lessons.LessonStore(root=root)
+    second = lessons.LessonStore(root=root)
+
+    first.add(text="Check the port is free before starting the server")
+    second.all()  # second loads now, before first writes again
+    first.add(text="Money in Decimal, never a bare float")
+    second.add(text="Never loosen a test to make it pass")
+
+    reloaded = lessons.LessonStore(root=root)
+    assert len(reloaded.all()) == 3
 
 
 # -- registration --------------------------------------------------------

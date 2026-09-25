@@ -33,6 +33,8 @@ Local only. Nothing here contacts a provider.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -69,11 +71,24 @@ OWNER_SOURCE = "owner"
 # paraphrase, so this is a prefilter, never a verdict. Upstream does the same job
 # with vector similarity and still routes the real judgement to Jev.
 SURFACE_FLOOR = 0.05
-# KICK_FLOOR is the bar for a local hard stop with no provider call. It is set
-# high on purpose: at this level the action and the lesson share most of their
-# wording, so the match is close to literal. Expect high precision and low
-# recall, and use an explicit review when a paraphrase must be caught.
-KICK_FLOOR = 0.50
+# KICK_FLOOR is the bar for a local hard stop with no provider call. A wrong kick
+# blocks the user's work, so the floor is set for precision, and it sits inside a
+# measured band rather than at a guessed round number. On the calibration pairs in
+# tests/test_lessons.py the paraphrases that must fire score 0.57 to 1.00 while the
+# actions that must not fire score at most 0.14, so 0.40 keeps margin on both sides
+# while staying biased toward not blocking real work.
+#
+# Reach is still bounded, and the bound is honest: canonical word matching catches
+# the paraphrase families written into _CANON above, so "clear out the temporary
+# decision folder with a recursive delete" now matches a lesson written as
+# "rm -rf /tmp/jevs-decision-store". It cannot catch an unbounded rephrasing, which
+# is why a review path exists and why a miss is recorded rather than hidden.
+KICK_FLOOR = 0.40
+# A kick also needs this many canonical words in common, independently of the
+# score. Without it a one word lesson can reach the floor purely through the
+# containment term against a long action, which is the cheapest possible way to
+# block something by accident.
+KICK_MIN_SHARED = 3
 
 _STOPWORDS = frozenset({
     "a", "an", "the", "and", "or", "but", "if", "then", "than", "so", "to", "of",
@@ -86,29 +101,128 @@ _STOPWORDS = frozenset({
     "one", "two", "only", "also", "just", "more", "most", "less", "least",
 })
 _TOKEN_RE = re.compile(r"[a-z0-9_./:+-]+")
+# Paths, flags, and dotted names are split so that "/tmp/x" can meet "temporary
+# directory" and "-rf" can meet "recursive".
+_SPLIT_RE = re.compile(r"[/\\.:_-]+")
+
+# Words that belong to the tool envelope rather than to the action. Every action
+# text is built as "<tool_name> <json args>", so without this the words "terminal"
+# and "command" sit inside every single action, inflating the union and pushing
+# every score down.
+_ENVELOPE_WORDS = frozenset({
+    "terminal", "command", "cmd", "cmdline", "arg", "args", "param", "params",
+    "path", "content", "query", "input", "value", "values", "json", "shell",
+})
+
+# The deliberate half of paraphrase handling, and the reason it can exist at all.
+# A local hard stop is not allowed to call a provider, so the only extra reach it
+# can have is the reach written down here: different ways of naming one action
+# collapse onto a single token. It is a small hand written table on purpose,
+# because every entry is a claim about meaning that a reviewer can read and
+# challenge one line at a time. Upstream reached this with vector similarity; a
+# dependency free plugin cannot, so this table plus the shape rules below are the
+# local substitute, and the honest limit is stated where the floor is defined.
+_CANON = {
+    "rm": "delete", "remove": "delete", "removing": "delete", "removed": "delete",
+    "delete": "delete", "deleting": "delete", "deleted": "delete",
+    "erase": "delete", "erasing": "delete", "erased": "delete",
+    "wipe": "delete", "wiping": "delete", "wiped": "delete",
+    "clear": "delete", "clearing": "delete", "cleared": "delete",
+    "purge": "delete", "purging": "delete", "drop": "delete", "dropping": "delete",
+    "unlink": "delete", "trash": "delete", "destroy": "delete", "destroying": "delete",
+    "clean": "delete", "cleanup": "delete",
+    "rf": "recursive", "r": "recursive", "recursive": "recursive", "recursively": "recursive",
+    "f": "force", "force": "force", "forced": "force",
+    "dir": "directory", "dirs": "directory", "folder": "directory", "folders": "directory",
+    "directory": "directory", "directories": "directory",
+    "tmp": "temporary", "temp": "temporary", "temporary": "temporary",
+    "file": "file", "files": "file", "document": "file", "documents": "file",
+    "store": "store", "storage": "store",
+    "check": "check", "verify": "check", "verifies": "check", "confirm": "check",
+    "inspect": "check", "validate": "check",
+    "mv": "move", "move": "move", "moves": "move", "moving": "move",
+    "rename": "move", "renaming": "move", "relocate": "move",
+    "mkdir": "create", "create": "create", "creating": "create", "make": "create",
+    "write": "write", "writing": "write", "wrote": "write",
+    "cp": "copy", "copy": "copy", "copying": "copy",
+    "prod": "production", "production": "production",
+    "db": "database", "database": "database",
+}
+
+JACCARD_WEIGHT = 0.6
+CONTAINMENT_WEIGHT = 0.4
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _stem(word: str) -> str:
+    """A crude suffix stripper, enough to fold "stores" and "storing" onto "store".
+
+    Short words are left alone, because stripping four characters off a five
+    letter word destroys it. A wrong fold can only cost precision on the local
+    hard stop path, and every local stop is reviewable, so crude is acceptable
+    here where clever would not be auditable.
+    """
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
+
+
+def _canonical(word: str) -> str:
+    direct = _CANON.get(word)
+    if direct:
+        return direct
+    stemmed = _stem(word)
+    return _CANON.get(stemmed, stemmed)
+
+
 def _tokens(text: Any) -> set[str]:
-    """Content words, lowercased. Used for deterministic relevance and repeats."""
-    return {t for t in _TOKEN_RE.findall(str(text or "").lower()) if t not in _STOPWORDS and len(t) > 1}
+    """Canonical content words for matching.
+
+    Deterministic and auditable line by line, which matters more here than
+    semantic reach: this decides whether a lesson is worth surfacing, whether a
+    correction repeats an existing lesson, and whether a kick may stop an action
+    locally with no provider call.
+    """
+    out: set[str] = set()
+    for raw in _TOKEN_RE.findall(str(text or "").lower()):
+        for part in _SPLIT_RE.split(raw):
+            if len(part) < 2 or part in _STOPWORDS or part in _ENVELOPE_WORDS:
+                continue
+            out.add(_canonical(part))
+    return out
+
+
+def _shared_count(left: Any, right: Any) -> int:
+    """How many canonical words two texts have in common."""
+    return len(_tokens(left) & _tokens(right))
 
 
 def _lexical_overlap(left: Any, right: Any) -> float:
-    """Jaccard overlap of content words, 0 to 1.
+    """Similarity of two texts, 0 to 1, over canonical content words.
 
-    Deterministic and line-by-line auditable, which matters more here than
-    semantic reach: this decides only whether a lesson is worth surfacing or
-    whether a correction repeats an existing lesson. The semantic judgement
-    stays with Jev when a review is actually worth a provider call.
+    Two shapes are blended because either one alone fails on this path. Jaccard
+    alone punishes a lesson for the action text being longer, and an action text
+    always carries more words than the rule describing it. Containment of the
+    smaller set is what actually answers "does this lesson describe this action",
+    but used alone it would score a one word lesson highly against any long
+    action, so it is weighted below Jaccard and measured against the smaller set.
+
+    Sharing no canonical word scores exactly zero, so an unrelated lesson cannot
+    drift up onto a floor by accident.
     """
     a, b = _tokens(left), _tokens(right)
     if not a or not b:
         return 0.0
-    return len(a & b) / len(a | b)
+    shared = len(a & b)
+    if not shared:
+        return 0.0
+    jaccard = shared / len(a | b)
+    containment = shared / min(len(a), len(b))
+    return JACCARD_WEIGHT * jaccard + CONTAINMENT_WEIGHT * containment
 
 
 @dataclass
@@ -137,8 +251,29 @@ class Lesson:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "Lesson":
+        """Rebuild one lesson, normalising whatever was on disk.
+
+        The store file is data that can be hand edited or truncated by a crash, so
+        every field is coerced here once rather than checked at each use. A row
+        without a usable id is rejected by the caller, not patched up.
+        """
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in row.items() if k in known})
+        clean = {k: v for k, v in row.items() if k in known}
+        clean["id"] = str(clean.get("id") or "")
+        clean["text"] = str(clean.get("text") or "")
+        clean["detect"] = str(clean.get("detect") or "")
+        clean["why"] = str(clean.get("why") or "")
+        clean["kind"] = clean.get("kind") if clean.get("kind") in KINDS else "lesson"
+        clean["status"] = clean.get("status") if clean.get("status") in STATUSES else "active"
+        clean["severity"] = clean.get("severity") if clean.get("severity") in SEVERITIES else "nudge"
+        raw_tags = clean.get("tags")
+        clean["tags"] = [str(t) for t in raw_tags] if isinstance(raw_tags, (list, tuple)) else []
+        for counter in ("surfaced", "catches", "escapes"):
+            try:
+                clean[counter] = max(0, int(clean.get(counter) or 0))
+            except (TypeError, ValueError):
+                clean[counter] = 0
+        return cls(**clean)
 
     @property
     def owner(self) -> bool:
@@ -195,7 +330,8 @@ class LessonStore:
         if self._loaded:
             return
         self._path, self._seq_path = self._paths()
-        os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        with contextlib.suppress(OSError):
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
         for attr, path in (("_items", self._path), ("_seq", self._seq_path)):
             try:
                 with open(path, "r", encoding="utf-8") as handle:
@@ -203,10 +339,52 @@ class LessonStore:
             except (OSError, ValueError):
                 continue
             if attr == "_items" and isinstance(raw, list):
-                self._items = [Lesson.from_dict(row) for row in raw if isinstance(row, dict)]
+                rows = []
+                for row in raw:
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        item = Lesson.from_dict(row)
+                    except (TypeError, ValueError):
+                        continue
+                    if item.id:
+                        rows.append(item)
+                self._items = rows
             elif attr == "_seq" and isinstance(raw, int):
                 self._seq = raw
         self._loaded = True
+
+    @contextlib.contextmanager
+    def _mutation(self):
+        """Serialise one read-modify-write of the whole document across processes.
+
+        Gateway, CLI, and cron run as separate processes, so an unguarded
+        load-mutate-save would silently drop whichever writer finished second. The
+        lock is advisory and shared with every other Jev process by path. If the
+        lock cannot be taken the write still proceeds, because losing a lesson
+        update is better than failing the caller.
+        """
+        base = self._path or self._paths()[0]
+        handle = None
+        try:
+            os.makedirs(os.path.dirname(base), exist_ok=True)
+            handle = open(f"{base}.lock", "a+")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            if handle is not None:
+                handle.close()
+            handle = None
+        try:
+            if handle is not None:
+                # Another process may have written since this one last read.
+                self._loaded = False
+            self._load()
+            yield
+        finally:
+            if handle is not None:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
 
     def _save(self) -> None:
         """Atomic write, so a crash cannot truncate the store."""
@@ -263,14 +441,21 @@ class LessonStore:
     def local_kicks(self, action_text: str, tags: set[str] | None = None) -> list[tuple[Lesson, float]]:
         """Kick lessons that match closely enough to stop an action locally.
 
-        Local only and provider free. It fires on near literal matches and will
-        miss a paraphrase, which is why an explicit review exists.
+        Local only and provider free. The match is canonical word overlap, so it
+        reaches the paraphrase families named in ``_CANON`` (delete/remove/wipe,
+        tmp/temporary, dir/folder) and misses an unbounded rephrasing, which is
+        why an explicit review exists. Two independent gates apply: the score
+        floor, and a minimum number of words in common, so a short lesson cannot
+        stop a long action on the containment term alone.
         """
-        return [
-            (item, score)
-            for item, score in self.candidates(action_text, tags, limit=16, floor=KICK_FLOOR)
-            if item.severity == "kick"
-        ]
+        hits = []
+        for item, score in self.candidates(action_text, tags, limit=16, floor=KICK_FLOOR):
+            if item.severity != "kick":
+                continue
+            if _shared_count(action_text, f"{item.text} {item.detect}") < KICK_MIN_SHARED:
+                continue
+            hits.append((item, score))
+        return hits
 
     def stats(self) -> dict[str, Any]:
         items = self.all(include_retired=True)
@@ -311,8 +496,7 @@ class LessonStore:
         if not text:
             raise ValueError("a lesson needs text")
         detect = str(detect or "").strip()
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             repeat = self._match_repeat(text, detect)
             if repeat is not None:
                 lesson, score = repeat
@@ -379,8 +563,7 @@ class LessonStore:
         review that returned which lessons applied. Counting prefilter candidates
         here would inflate the tally and retire good lessons as noise.
         """
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             touched = {}
             for lesson_id in lesson_ids:
                 item = self.get(lesson_id)
@@ -406,8 +589,7 @@ class LessonStore:
 
     def record_caught(self, lesson_ids: list[str]) -> dict[str, int]:
         """Count a mistake caught before it happened."""
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             touched = {}
             for lesson_id in lesson_ids:
                 item = self.get(lesson_id)
@@ -431,8 +613,7 @@ class LessonStore:
         scope: str | None = None,
     ) -> dict[str, Any]:
         """Correct a lesson by hand, keeping its record."""
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             item = self.get(lesson_id)
             if item is None:
                 raise ValueError(f"unknown lesson: {lesson_id}")
@@ -453,8 +634,7 @@ class LessonStore:
             return {"lesson": item.as_dict()}
 
     def retire(self, lesson_id: str, reason: str = "retired by hand") -> dict[str, Any]:
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             item = self.get(lesson_id)
             if item is None:
                 raise ValueError(f"unknown lesson: {lesson_id}")
@@ -468,8 +648,7 @@ class LessonStore:
 
     def sweep(self) -> list[str]:
         """Retire noise: lessons judged relevant many times that never caught anything."""
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             gone = []
             for item in self._items:
                 if (item.status == "active" and item.kind == "lesson" and not item.owner
@@ -503,8 +682,7 @@ class LessonStore:
         origin = str(pack.get("from") or "unknown")
         made = str(pack.get("made") or "")[:10]
         added = []
-        with self._lock:
-            self._load()
+        with self._lock, self._mutation():
             for row in rows:
                 if not isinstance(row, dict) or not str(row.get("text") or "").strip():
                     continue

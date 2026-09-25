@@ -1004,8 +1004,30 @@ def _lesson_action_text(tool_name: str, args: Any, limit: int = 600) -> str:
     return f"{tool_name} {_safe_text(args, limit)}".strip()
 
 
+# A pre_tool_call callback is a POLICY hook in Hermes: an exception or a timeout
+# raised there is resolved as a BLOCK on the user's tool call, not as "no opinion".
+# A lesson guard that cannot reach a decision must therefore abstain, never vetoing
+# the tool. These counters keep such a failure visible instead of letting it look
+# like a quietly working guard.
+_LESSON_GATE_ERRORS: dict[str, Any] = {"count": 0, "last": ""}
+
+
 def _lesson_gate(tool_name: str, args: Any, enforcing: bool) -> dict[str, Any] | None:
     """Stop an action a kick lesson matches, or note that it would have stopped one.
+
+    Nothing in here may raise. See the note above on why an escaping exception would
+    block the tool rather than pass it.
+    """
+    try:
+        return _lesson_gate_decision(tool_name, args, enforcing)
+    except Exception as exc:
+        _LESSON_GATE_ERRORS["count"] += 1
+        _LESSON_GATE_ERRORS["last"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return None
+
+
+def _lesson_gate_decision(tool_name: str, args: Any, enforcing: bool) -> dict[str, Any] | None:
+    """The lesson decision itself.
 
     A kick lesson is a known mistake, either written by the owner or escalated
     after it escaped twice. This is local and provider free, and it fires only on
@@ -1019,10 +1041,7 @@ def _lesson_gate(tool_name: str, args: Any, enforcing: bool) -> dict[str, Any] |
         return None
     lesson, score = hits[0]
     if not enforcing:
-        try:
-            store.note_would_kick(lesson.id, tool_name=tool_name, score=score)
-        except Exception:
-            return None
+        store.note_would_kick(lesson.id, tool_name=tool_name, score=score)
         return None
     store.record_surfaced([lesson.id])
     store.record_caught([lesson.id])
@@ -1110,7 +1129,11 @@ def jev_lessons_handler(args: dict[str, Any], **_: Any) -> str:
                 raise ValueError("import requires a pack object")
             return json.dumps({"success": True, **store.import_pack(pack)}, sort_keys=True, default=str)
         if action == "stats":
-            return json.dumps({"success": True, "stats": store.stats()}, sort_keys=True, default=str)
+            return json.dumps({
+                "success": True,
+                "stats": store.stats(),
+                "gate": dict(_LESSON_GATE_ERRORS),
+            }, sort_keys=True, default=str)
         return json.dumps({"error": "unknown action"})
     except (KeyError, TypeError, ValueError) as exc:
         return json.dumps({"error": str(exc)})

@@ -222,10 +222,71 @@ def test_a_literal_match_clears_the_kick_floor(store, lessons):
     assert hits[0][1] >= lessons.KICK_FLOOR
 
 
-def test_a_paraphrase_does_not_clear_the_kick_floor(store):
-    """Documents the limitation: a local kick misses a paraphrase on purpose."""
+# The paraphrase family used to be a documented miss. It is now matched, because
+# the matcher canonicalises the words that name the same action, so these pin the
+# new reach rather than describing its absence.
+
+PARAPHRASES_THAT_MUST_FIRE = [
+    "clear out the temporary decision folder with a recursive delete",
+    "wipe the temp dir for jevs decision store",
+    "remove the decision store directory recursively",
+    "force erase of temporary jevs store folder",
+]
+
+
+@pytest.mark.parametrize("paraphrase", PARAPHRASES_THAT_MUST_FIRE)
+def test_a_paraphrase_clears_the_kick_floor(store, lessons, paraphrase):
     store.add(text=LITERAL, detect=LITERAL, source="owner")
-    assert store.local_kicks(PARAPHRASE) == []
+    hits = store.local_kicks(paraphrase)
+    assert [h[0].id for h in hits] == ["L1"], paraphrase
+    assert hits[0][1] >= lessons.KICK_FLOOR
+
+
+def test_a_distant_paraphrase_still_misses(store, lessons):
+    """The residual limit, pinned so it cannot be quietly claimed as fixed.
+
+    Canonical words cover the families written into the table. A rephrasing that
+    shares no canonical word with the lesson cannot be caught locally, which is
+    exactly why the review path exists.
+    """
+    store.add(text=LITERAL, detect=LITERAL, source="owner")
+    assert store.local_kicks("get rid of the scratch area used for the decisions work") == []
+    assert lessons._lexical_overlap(
+        "terminal {\"command\": \"get rid of the scratch area used for the decisions work\"}",
+        LITERAL,
+    ) < lessons.KICK_FLOOR
+
+
+def test_an_unrelated_lesson_never_kicks(store, lessons):
+    """A false kick blocks real work, so precision is asserted, not assumed."""
+    store.add(text="Money in Decimal, never a bare float", detect="a float used for money", source="owner")
+    store.add(text="Check the port is free before starting the server", detect="a start with no port check", source="owner")
+    store.add(text="Read the file before editing it", detect="an edit to an unread file", source="owner")
+    assert store.local_kicks(LITERAL) == []
+
+
+def test_a_delete_of_a_different_target_does_not_kick(store):
+    """Sharing the verb is not sharing the mistake."""
+    store.add(text=LITERAL, detect=LITERAL, source="owner")
+    assert store.local_kicks("rm -rf /var/backups/production-database") == []
+
+
+def test_a_one_word_lesson_cannot_kick_a_long_action(store, lessons):
+    """The shared word count is an independent gate, not decoration.
+
+    Containment alone would let a single shared word reach the floor against a
+    long action, which is the cheapest way to block something by accident.
+    """
+    store.add(text="delete", detect="delete", source="owner")
+    hits = store.local_kicks(LITERAL)
+    assert hits == []
+    assert lessons._shared_count(LITERAL, "delete") < lessons.KICK_MIN_SHARED
+
+
+def test_a_literal_match_still_scores_at_the_top(store):
+    """Better reach must not have cost the near literal case its certainty."""
+    store.add(text=LITERAL, detect=LITERAL, source="owner")
+    assert store.local_kicks(LITERAL)[0][1] == pytest.approx(1.0, abs=0.05)
 
 
 def test_candidates_rank_the_closest_first(store):

@@ -132,5 +132,7 @@ for attribution:
 > -- psygns, osENV.io learn.go
 
 Deliberate differences in this implementation: lessons are ranked with a
-deterministic lexical score rather than vector similarity, and a repeat merges on
-a wording match with a manual correction path, rather than on a model judgement.
+deterministic score over canonical words rather than vector similarity, and a repeat
+merges on a wording match with a manual correction path, rather than on a model
+judgement. The canonical word table is a small hand written list, not a language
+model, because a local hard stop has to be auditable and cannot call a provider.

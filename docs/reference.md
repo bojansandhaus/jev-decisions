@@ -173,7 +173,7 @@ Severity is `nudge` or `kick`. A new lesson is a nudge; a lesson with `source=ow
 
 In an enforcing supervision mode, a kick lesson whose wording closely matches an action blocks that action through the same `pre_tool_call` veto shape the control lease uses, and its catch and surfaced tallies are incremented. In `shadow` mode nothing is blocked, nothing is counted as caught, and the match is recorded to the ledger as `lesson_would_kick`.
 
-The local match is lexical, so it is precise on a close match and blind to a paraphrase. That is deliberate: this is a fast local stop and a prefilter, and the semantic judgement stays with Jev through an explicit review.
+The local match runs over canonical words, so the named paraphrase families meet (`remove`/`delete`/`wipe`/`clear`, `tmp`/`temporary`, `dir`/`folder`, `-rf`/`recursive`) and a paraphrased action can be stopped locally. Reach is bounded twice over: by that table, and by a minimum number of words in common, so a short lesson cannot stop a long action on a containment score alone. A rephrasing that shares no canonical word still slips past the local gate, and that residual is deliberate, because the semantic judgement stays with Jev through an explicit review.
 
 Recording `surfaced` from the prefilter would inflate the tally and retire good lessons, so only a real judgement counts: a local kick match, or a review that returned which lessons applied.
 
