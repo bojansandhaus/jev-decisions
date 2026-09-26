@@ -1,4 +1,4 @@
-"""Hermes plugin exposing Jev's typed Decisions API through OpenRouter."""
+"""Hermes plugin exposing Jev's typed Decisions API over a key, or Laya locally."""
 from __future__ import annotations
 
 import hashlib
@@ -41,9 +41,9 @@ try:
 except ImportError:
     from approval_policy import apply_policy
 try:
-    from .jev_client import provider_mode, request_decisions
+    from .jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, provider_mode, request_decisions
 except ImportError:
-    from jev_client import provider_mode, request_decisions
+    from jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, provider_mode, request_decisions
 try:
     from . import supervision as _supervision
 except ImportError:
@@ -108,7 +108,12 @@ JEV_DECIDE_SCHEMA = {
 
 
 def _secret() -> str:
+    """The active provider's credential, or none for the keyless local route."""
     mode = provider_mode()
+    if mode in KEYLESS_PROVIDERS:
+        # A local server needs a credential only when it was started with its own
+        # bearer check, which `LAYA_API_KEY` carries. Otherwise there is none.
+        return get_secret("LAYA_API_KEY") or ""
     primary = "TYPESAFE_API_KEY" if mode.startswith("typesafe") else "OPENROUTER_API_KEY"
     value = get_secret(primary)
     if not value:
@@ -118,17 +123,23 @@ def _secret() -> str:
 
 def _fallback_secret() -> str | None:
     mode = provider_mode()
+    # A local Laya route replaces the hosted providers instead of trailing them,
+    # so it has no fallback hop and no second credential to find.
+    if mode in KEYLESS_PROVIDERS: return None
     if mode == "typesafe_then_openrouter": return get_secret("OPENROUTER_API_KEY")
     if mode == "openrouter_then_typesafe": return get_secret("TYPESAFE_API_KEY")
     return None
 
 
 def _request(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
-    if provider_mode() != "openrouter":
+    """One review through the selected route. `laya` needs no key and sends none."""
+    mode = provider_mode()
+    if mode != "openrouter":
         return request_decisions(
             payload.get("state"), payload.get("questions", {}), api_key,
             model=payload.get("model") or _MODEL,
-            provider=provider_mode(), fallback_api_key=_fallback_secret(),
+            provider=mode, fallback_api_key=_fallback_secret(),
+            timeout=LAYA_TIMEOUT_S if mode in KEYLESS_PROVIDERS else 30.0,
         )
     body = json.dumps(payload).encode("utf-8")
     req = Request(

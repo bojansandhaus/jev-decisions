@@ -27,6 +27,8 @@ The default Hermes adapter sends this shape to OpenRouter's Decisions API:
 
 Keep `state` small and redacted. Put definitions in `criteria`, not in a free form prompt. Keep the question count bounded. Treat the returned answer as a recommendation.
 
+Two ways to answer that call, and you pick one: Jev over a TypeSafe or OpenRouter key, or Laya locally with no key. A local `laya-serve` process publishes the same `POST /v1/systemone` shape, so the payload above is unchanged except that `model` names a Laya checkpoint instead of a Jev model and no `Authorization` header is sent. `state` then stays on your machine. See [provider settings and the local route](reference.md#provider-settings-and-the-local-route).
+
 ## Adapter contract for another agent
 
 A framework adapter only needs to do five things:

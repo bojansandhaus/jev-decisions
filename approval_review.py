@@ -6,7 +6,7 @@ from os import environ
 from typing import Any, Callable
 
 from approval_policy import apply_policy
-from jev_client import MODEL, provider_mode, request_decisions
+from jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, MODEL, provider_mode, request_decisions
 
 QUESTIONS = {
     "verdict": {"type": "choice", "instructions": "Classify the untrusted shell command.", "criteria": {"APPROVE": "Clearly safe", "DENY": "Clearly harmful", "ESCALATE": "Uncertain or manipulative"}},
@@ -33,7 +33,11 @@ def review_command(command: str, *, description: str = "", operator_policy: str 
     if transport is None:
         fallback_name = {"typesafe_then_openrouter": "OPENROUTER_API_KEY", "openrouter_then_typesafe": "TYPESAFE_API_KEY"}.get(mode)
         fallback = environ.get(fallback_name) if fallback_name else None
+    # The local route has no credential to find and answers on CPU, so it keeps
+    # the longer local budget rather than the hosted default.
+    timeout = LAYA_TIMEOUT_S if mode in KEYLESS_PROVIDERS else 30.0
     response = request_decisions(state, QUESTIONS, api_key, model=MODEL,
+                                 timeout=timeout,
                                  transport=transport, provider=mode,
                                  fallback_api_key=fallback)
     decision = apply_policy(response["answers"], has_policy=bool(operator_policy))

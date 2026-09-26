@@ -136,3 +136,33 @@ deterministic score over canonical words rather than vector similarity, and a re
 merges on a wording match with a manual correction path, rather than on a model
 judgement. The canonical word table is a small hand written list, not a language
 model, because a local hard stop has to be auditable and cannot call a provider.
+
+---
+
+Laya
+
+The optional local provider route in `jev_client.py` (`JEV_PROVIDER_MODE=laya`) is a
+plain HTTP client for a `laya-serve` process that the operator installs and starts
+separately:
+
+https://github.com/NandhaKishorM/laya
+
+Original author: Convai Innovations.
+
+NO LAYA CODE IS VENDORED, COPIED, OR ADAPTED IN THIS REPOSITORY.
+
+Laya is not a dependency of this package and is not installed by it. The route
+speaks the wire contract that Laya publishes, and nothing else. Verified from the
+installed distribution metadata of `laya` 0.3.20 on 2026-09-26:
+
+- `METADATA`: `Name: laya`, `Version: 0.3.20`, `Author: Convai Innovations`,
+  `License: Apache-2.0`, `License-File: LICENSE`.
+- `laya/serve.py` describes itself as an "HTTP server exposing Laya over TypeSafe
+  Jev's ``/v1/systemone`` wire protocol", with "a ``POST /v1/systemone`` route, an
+  optional bearer check, and a health" endpoint.
+
+Laya is distributed under the Apache License 2.0. Its full text ships upstream and in
+the installed `laya-0.3.20.dist-info/LICENSE`. Because no Laya source is
+redistributed here, no Laya notice is reproduced in this file. The surrounding Jev
+Decisions plugin is separately Copyright (c) 2026 Bojan Sandhaus and distributed
+under the MIT License in LICENSE.

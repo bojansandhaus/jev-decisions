@@ -4,9 +4,13 @@ Jev Decisions 0.2.0 includes an approval only companion provider and an advisory
 
 ## Provider selection
 
-Model reviews and smart approval review can use TypeSafe directly, OpenRouter, or either provider as a fallback. Set `JEV_PROVIDER_MODE` to one of `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default is `openrouter` for backward compatibility. Store `TYPESAFE_API_KEY` and `OPENROUTER_API_KEY` through the Hermes secret manager or the profile environment. Never put a key in `config.yaml`, a command argument, a journal, or this repository.
+Model reviews and smart approval review can use a hosted Jev provider or a local Laya server. Set `JEV_PROVIDER_MODE` to one of `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, or `laya`. The default is `openrouter` for backward compatibility.
 
-The direct TypeSafe endpoint is `https://api.typesafe.ai/v1/systemone` with model `jev-1.13.0`. The OpenRouter endpoint is `https://openrouter.ai/api/alpha/decisions` with model `typesafe/jev-1.13`. A fallback is attempted only after the selected primary route fails. A provider outage, missing key, timeout, malformed response, invalid number, unknown enum, or incomplete answer is an unavailable review and must escalate. It never silently approves.
+The four hosted modes run Jev over a hosted API key. Store `TYPESAFE_API_KEY` and `OPENROUTER_API_KEY` through the Hermes secret manager or the profile environment. Never put a key in `config.yaml`, a command argument, a journal, or this repository. The direct TypeSafe endpoint is `https://api.typesafe.ai/v1/systemone` with model `jev-1.13.0`. The OpenRouter endpoint is `https://openrouter.ai/api/alpha/decisions` with model `typesafe/jev-1.13`. A fallback is attempted only after the selected primary route fails.
+
+`laya` is the other arrangement, not a third route in the chain. It runs Laya over a `laya-serve` process on your own machine with no key at all. It is exactly one provider, it never has a hosted fallback, and it is rejected as a fallback member. `LAYA_API_KEY` is forwarded only when your server was started with its own bearer check; otherwise no `Authorization` header is sent at all. Point it at your server with `JEV_LAYA_BASE_URL` (default `http://127.0.0.1:8123`), `JEV_LAYA_ENDPOINT_PATH` (default `/v1/systemone`), and `JEV_LAYA_MODEL` (default `english`, the checkpoint `laya-serve` serves). Plain HTTP is accepted on loopback only.
+
+A provider outage, missing key, timeout, malformed response, invalid number, unknown enum, or incomplete answer is an unavailable review and must escalate. It never silently approves. The measured limits of the local checkpoint are in [the reference](reference.md#provider-settings-and-the-local-route); do not read a local score as a hosted score without checking the scale there.
 
 ## Advisory workflow
 

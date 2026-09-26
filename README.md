@@ -79,7 +79,7 @@ That gives a recurring choice a history. You can inspect whether a maintenance r
 
 <table>
 <tr><th>Start here</th><th>What you get</th><th>What to expect</th></tr>
-<tr><td><strong>One requested review</strong></td><td>A focused check discussed in your conversation.</td><td>Ask Hermes to use the named review. Model reviews require OpenRouter.</td></tr>
+<tr><td><strong>One requested review</strong></td><td>A focused check discussed in your conversation.</td><td>Ask Hermes to use the named review. Model reviews require a hosted provider key or a local Laya server.</td></tr>
 <tr><td><strong>Local checks only</strong></td><td>Fixed rules for approval and supplied verification evidence.</td><td>No model request. Hermes must supply accurate facts; these rules do not interpret the whole task.</td></tr>
 <tr><td><strong>Automatic observation</strong></td><td>Review records around tool activity and answers.</td><td>Opt in explicitly. Additional requests, records, and delay are possible; commands are not blocked.</td></tr>
 </table>
@@ -90,7 +90,7 @@ For most people, one explicit review before an important change is the best star
 
 [Jev 1.13](https://openrouter.ai/typesafe/jev-1.13) is a decision model made by **TypeSafe**. It reads the information supplied to it and answers focused questions: how likely something is to be true, which option fits, or how something scores against a set of criteria. It returns those answers with numbers that express uncertainty. It does not write chat replies or explanations.
 
-This plugin connects those reviews to Hermes through OpenRouter. Hermes can interpret the returned answers for you; it should not present its explanation as reasoning supplied by Jev. You keep the main model you already use.
+This plugin connects those reviews to Hermes through a hosted provider, or through a local Laya server you run yourself. Hermes can interpret the returned answers for you; it should not present its explanation as reasoning supplied by Jev. You keep the main model you already use.
 
 The plugin also includes simple local rules for checking whether an action needs approval and whether Hermes has supplied evidence of a completed change. Those checks work without a model request.
 
@@ -129,7 +129,9 @@ These commands target the default Hermes profile and enable the tools for the CL
 
 The doctor should report successful discovery and registration of eight tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
-**For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, or `openrouter_then_typesafe`. The default remains `openrouter`. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
+**For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, or `laya`. The default remains `openrouter`. It runs Jev over a TypeSafe or OpenRouter key, or over Laya locally with no key. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
+
+**The local option is a replacement, not a third provider.** `JEV_PROVIDER_MODE=laya` answers from a `laya-serve` process on your own machine and needs no key at all. It is exactly one provider, no hosted mode ever selects it, and it has no hosted fallback. Point it at your server with `JEV_LAYA_BASE_URL` (default `http://127.0.0.1:8123`) and name the checkpoint with `JEV_LAYA_MODEL` (default `english`). `LAYA_API_KEY` is sent only if your server was started with its own bearer check; otherwise the `Authorization` header is omitted entirely. See [the measured limits of the base checkpoint](docs/reference.md#measured-limits-of-the-local-checkpoint) before you rely on it.
 
 Start a fresh Hermes process after installation. For the desktop app or a gateway, restart the backend that runs your sessions. Opening another conversation in an unchanged backend may not load new plugin code.
 
@@ -169,7 +171,7 @@ Once explicit checks are useful, you can enable reviews before tool calls, after
 JEV_ENABLE_HOOKS=1 hermes
 ```
 
-For a desktop backend or service, set `JEV_ENABLE_HOOKS=1` in that process's environment and restart it. The OpenRouter key must also be available to that process for model reviews.
+For a desktop backend or service, set `JEV_ENABLE_HOOKS=1` in that process's environment and restart it. The provider key, or a reachable local Laya server, must also be available to that process for model reviews.
 
 Automatic reviews create local records. They do **not** insert a warning into every conversation, rewrite answers, or stop commands. Their records are useful for inspecting agent behavior; ask for an explicit review when you want a result discussed in the chat.
 
@@ -218,7 +220,7 @@ The lifecycle is adapted from the design of psygns's osENV.io. See `THIRD_PARTY_
 
 **Reviews see what Hermes supplies.** Jev cannot check a document it has not been shown or confirm a delivery without evidence from the sending system. A high confidence score can still accompany a wrong answer.
 
-**Model reviews leave your machine.** The relevant text goes to OpenRouter and its model provider. The local rule checks do not make those requests. Redaction reduces some exposure but cannot guarantee that private information has been removed.
+**Model reviews leave your machine, unless you run them locally.** A hosted review sends the relevant text to OpenRouter and its model provider. The local rule checks do not make those requests. `JEV_PROVIDER_MODE=laya` instead sends the text to a `laya-serve` process on your own machine, which needs no key and makes no outbound request. Redaction reduces some exposure but cannot guarantee that private information has been removed, and a local server removes the egress rather than the risk of storing what you send it.
 
 **Records stay on disk until you manage them.** Automatic tool records omit raw arguments and results in favor of hashes, lengths, and review information. Manual journal entries save the text and evidence supplied to them. Protect the records and decide how long to retain them; disabling the plugin does not delete them.
 
@@ -242,7 +244,7 @@ A review that finds no issue is still bounded by its input. If the source was st
 
 ### What should I try first if I only have a few minutes?
 
-Run the harmless local backup check in [Try it in a conversation](#try-it-in-a-conversation). It confirms that Hermes can call the plugin without a provider key. Then review a short synthetic plan with `plan_review` to test the OpenRouter connection. Neither example needs permission to change your files.
+Run the harmless local backup check in [Try it in a conversation](#try-it-in-a-conversation). It confirms that Hermes can call the plugin without a provider key. Then review a short synthetic plan with `plan_review` to test the hosted connection, or your local Laya server if you pinned `JEV_PROVIDER_MODE=laya`. Neither example needs permission to change your files.
 
 ### Should I ask for a review on every task?
 
@@ -262,7 +264,7 @@ No. Your usual model continues the conversation and performs the task. The plugi
 
 ### Is there a subscription or extra charge?
 
-The plugin is MIT licensed. Jev requests through OpenRouter may incur usage charges under your account. See [current model pricing](https://openrouter.ai/typesafe/jev-1.13). Local rule checks and local records need no paid provider request.
+The plugin is MIT licensed. Jev requests through OpenRouter may incur usage charges under your account. See [current model pricing](https://openrouter.ai/typesafe/jev-1.13). A local Laya route costs no provider request at all, and local rule checks and local records need no paid provider request either. See [the local option](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider).
 
 ### Why use this instead of asking Hermes to double-check itself?
 
@@ -274,7 +276,20 @@ No. Keep Hermes's existing approval settings. The plugin recommends when to ask 
 
 ### Can I use it without sending anything to OpenRouter?
 
-Yes, for the local approval and verification rules and local records. Leave automatic reviews off and avoid the model review tools. Reviews that read and judge the meaning of a plan, message, or answer require Jev through OpenRouter.
+Yes, in two different ways. For the local approval and verification rules and local records, leave automatic reviews off and avoid the model review tools. For the model reviews themselves, run Laya locally instead of a hosted provider, which sends nothing off your machine and needs no key; see [Can I run it locally with Laya instead of a hosted provider?](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider). Reviews that read and judge the meaning of a plan, message, or answer require either a hosted Jev provider or that local server; there is no third option.
+
+### Can I run it locally with Laya instead of a hosted provider?
+
+Yes. Two arrangements exist and you pick one: Jev over a TypeSafe or OpenRouter key, or Laya locally with no key. Laya is a typed decision model you run yourself, and the `laya-serve` server it ships publishes the same `POST /v1/systemone` contract, so the plugin scores through a process on your own machine with no key and no outbound request:
+
+```bash
+python3 -m pip install laya
+laya-serve --help          # LAYA_HOST, LAYA_PORT, LAYA_DEVICE, LAYA_THREADS, LAYA_MODEL, LAYA_API_KEY
+```
+
+Then set `JEV_PROVIDER_MODE=laya` in the environment of the Hermes process that runs your sessions. `JEV_LAYA_BASE_URL` defaults to `http://127.0.0.1:8123`, `JEV_LAYA_ENDPOINT_PATH` to `/v1/systemone`, and `JEV_LAYA_MODEL` to `english`, which names the checkpoint your server is serving. The local route is exactly one provider: it replaces the hosted pair rather than joining it, no hosted mode ever selects it, and it is rejected as a fallback member.
+
+Three measured limits, from live runs against `laya-serve` on CPU with the base English checkpoint, are worth knowing before you point real work at it. It is slow: about 1.6 seconds per question row, and model load takes 25 to 35 seconds. Its answers are weakly separated, so the approval policy's confidence floor tends to escalate instead of approving. And no quality claim is made for this base checkpoint. The numbers and the score scale are in [the reference](docs/reference.md#measured-limits-of-the-local-checkpoint). Calibrate on your own labelled examples first.
 
 ### Why did the agent say it was verified when the target was not checked?
 
@@ -286,7 +301,7 @@ It records decisions and outcomes for later review. It does not train the model,
 
 ### The plugin is installed, but Hermes cannot find its tools. What should I check?
 
-Run `hermes plugins doctor jev-decisions`. Check that both the plugin and the `jev` toolset are enabled in the profile and platform you are using, then restart the relevant Hermes process. If model reviews fail, check that the OpenRouter key is available to that same process. A key set in a different terminal will not necessarily be available to the desktop backend.
+Run `hermes plugins doctor jev-decisions`. Check that both the plugin and the `jev` toolset are enabled in the profile and platform you are using, then restart the relevant Hermes process. If model reviews fail, check the route that process selected: with a hosted mode, the matching `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` must be available to it, and a key set in a different terminal will not necessarily be available to the desktop backend. With `JEV_PROVIDER_MODE=laya`, check that `laya-serve` is listening on `JEV_LAYA_BASE_URL` and that `JEV_LAYA_MODEL` names the checkpoint it actually serves.
 
 ### Can I use it with another agent?
 

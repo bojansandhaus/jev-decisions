@@ -52,8 +52,8 @@ The plugin exposes eight tools under the `jev` toolset.
 
 <table>
 <tr><th>Tool</th><th>Use it for</th><th>Provider required?</th></tr>
-<tr><td><code>jev_decide</code></td><td>Custom typed questions against bounded state.</td><td>Yes</td></tr>
-<tr><td><code>jev_workflow</code></td><td>A prepared review such as <code>plan_review</code>, <code>output_review</code>, or the opt in <code>approval_review</code>.</td><td>Yes</td></tr>
+<tr><td><code>jev_decide</code></td><td>Custom typed questions against bounded state.</td><td>Yes, a hosted key or local Laya</td></tr>
+<tr><td><code>jev_workflow</code></td><td>A prepared review such as <code>plan_review</code>, <code>output_review</code>, or the opt in <code>approval_review</code>.</td><td>Yes, a hosted key or local Laya</td></tr>
 <tr><td><code>jev_gateway</code></td><td>Local action policy, verification, domain classification, and ledger snapshot.</td><td>No</td></tr>
 <tr><td><code>jev_ingest</code></td><td>Open a rule classified case from supplied event data.</td><td>No</td></tr>
 <tr><td><code>jev_ledger</code></td><td>Record reviews, labeled outcomes, commitments, and decisions; inspect metrics.</td><td>No</td></tr>
@@ -292,6 +292,42 @@ Example tool arguments:
 ```
 
 Returned probabilities and confidence describe the model's judgment. They do not prove that a statement is true or that an action is authorized. Keep questions specific enough that a later observation can confirm or contradict them.
+
+## Provider settings and the local route
+
+There are two mutually exclusive ways to answer a typed question: Jev over a hosted API key, or Laya locally with no key. You pick one with `JEV_PROVIDER_MODE`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `JEV_PROVIDER_MODE` | `openrouter` | `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, or `laya`. |
+| `TYPESAFE_API_KEY` | unset | Credential for the direct TypeSafe route. Required by the `typesafe` modes. |
+| `OPENROUTER_API_KEY` | unset | Credential for the OpenRouter route. Required by the `openrouter` modes. |
+| `LAYA_API_KEY` | unset | Optional bearer for a `laya-serve` started with its own `LAYA_API_KEY`. The local route needs no credential. |
+| `JEV_LAYA_BASE_URL` | `http://127.0.0.1:8123` | Local `laya-serve` base URL. Plain HTTP is accepted on `localhost`, `127.0.0.1`, and `::1`; any other host must be HTTPS. |
+| `JEV_LAYA_ENDPOINT_PATH` | `/v1/systemone` | The Decisions protocol path `laya-serve` publishes. |
+| `JEV_LAYA_MODEL` | `english` | The checkpoint the server serves. `english`, `multilingual`, and `typed-decisions` name a checkpoint directly. |
+
+`laya` is a replacement for the hosted pair, never a member of it. `laya` builds a chain of exactly one provider, no hosted mode ever selects it, and an order containing `laya` is rejected as a fallback. The wire client omits the `Authorization` header entirely when no key is configured, so a server started without `LAYA_API_KEY` accepts the request unchanged; an empty bearer is wrong and is not sent. Laya is an external package you install yourself, authored by Convai Innovations under Apache-2.0 at [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya); no Laya code ships in this repository.
+
+### Question shapes on the local route
+
+`laya-serve` answers the same `answers` mapping a hosted Decisions provider returns, with the same three question types, but the shapes are stricter in two places:
+
+- A `choice` question keeps `criteria` as a dict of option to description, and the answer's `choice` is the winning label string.
+- A `score` question must send `criteria` as an ordered list of level descriptions, index 0 first. A dict is refused by the server out loud, so the plugin rejects it before the request. The answer carries a `legend` that maps index to description.
+- A `noul` question answers with `noul` as the probability of true.
+
+### The score scale, measured
+
+A local `score` is the expected level on the legend index scale `0..N-1`, not a `0..1` probability. That is the same scale the hosted route uses, which is what the `blast_radius` thresholds in `approval_policy` were written against: measured on 2026-09-26 with the same three level `blast_radius` question (`["trivial", "annoying", "severe"]`) and the same command state, the hosted route returned `score 0.72` with `probabilities {0: 0.42, 1: 0.44, 2: 0.14}` and the local route returned `score 1.2068` with `probabilities {0: 0.1079, 1: 0.5773, 2: 0.3148}`. Both values are the expected index of their own distribution, so `1.6` and `2.0` keep their meaning on the local route for a three level question. They are not portable to a question with a different number of levels, and the local plugin asserts the answer stays inside `0..len(criteria)-1` and that the returned legend matches the levels it asked about.
+
+### Measured limits of the local checkpoint
+
+These come from live runs against `laya-serve` 0.3.20 on CPU, base English checkpoint, on 2026-09-26:
+
+1. **It is slow and it is one forward pass at a time.** A six question review took about 2 seconds once loaded, and CPU inference is roughly 1.6 seconds per question row. Model load takes 25 to 35 seconds. The local route therefore gets a 120 second budget instead of the hosted 30 second default, and one process should serve one request at a time.
+2. **Its confidence is low, so the approval policy escalates.** `confidence` is one minus normalized entropy and falls as probability spreads. A live local `verdict` answer returned `confidence 0.1119` against a `0.55` floor in `approval_policy`, and the end to end local approval review returned `ESCALATE` on `self_advocating 0.83 >= 0.6` rather than an approval. That is the policy working as designed on a weakly separated answer, not a bug, but it means a local route is not a drop in quiet replacement for a hosted one.
+3. **No quality claim is made for this checkpoint.** On the compaction retention evaluation in the companion plugin, this base checkpoint's zero shot discrimination between keep and drop was near zero, with a 0.0014 gap between the two classes and calibration hitting its 0.40 ceiling. Those numbers were measured there, not here, and they are reported because they bound what a local score is worth. Calibrate on your own labelled examples before trusting a local route for a consequential decision.
 
 ## Integrate another AI agent
 
