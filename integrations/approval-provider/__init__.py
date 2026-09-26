@@ -503,10 +503,16 @@ class JevClient:
             verdict, reason = "ESCALATE", "command truncated before judgement"
 
         usage = data.get("usage", {})
+        # The reviewed command never reaches the log stream: it is untrusted text and
+        # it is already redacted, truncated, and recorded in the 0600 JSONL decision
+        # record by _record. This line carries the decision and its measured numbers
+        # only, plus the command length so a row can be correlated with that record.
         logger.info("%s %s [%s] (conf %.2f, blast %.2f, advocating %.2f, "
-                    "policy_allows %.2f, reads_secrets %.2f, sends_outbound %.2f) for %r",
+                    "policy_allows %.2f, reads_secrets %.2f, sends_outbound %.2f) "
+                    "for command of %d chars%s",
                     PROVIDER_NAME, verdict, reason, confidence, blast, advocating, policy_ok,
-                    reads_secrets, sends_outbound, safe_command[:60])
+                    reads_secrets, sends_outbound, len(safe_command),
+                    " (truncated)" if truncated else "")
         _record({"ts": time.time(), "verdict": verdict, "reason": reason,
                  "model": data.get("model", model_id), "flagged_as": description,
                  "provider": data.get("provider", ""), "route": _route_for(self.base_url)[0],

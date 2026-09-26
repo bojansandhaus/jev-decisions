@@ -299,7 +299,7 @@ There are three ways to answer a typed question: Jev over a hosted API key, Laya
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `JEV_PROVIDER_MODE` | `openrouter` | `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, `laya`, or a local first chain: `laya_then_typesafe`, `laya_then_openrouter`, `laya_then_typesafe_openrouter`, `laya_then_openrouter_typesafe`. |
+| `JEV_PROVIDER_MODE` | `openrouter` | `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, `laya`, or a local first chain: `laya_then_typesafe`, `laya_then_openrouter`, `laya_then_typesafe_openrouter`, `laya_then_openrouter_typesafe`. The DOGA aliases `laya_local` and `laya_with_jev_fallback` are also accepted; see [DOGA selector aliases](#doga-selector-aliases). |
 | `TYPESAFE_API_KEY` | unset | Credential for the direct TypeSafe route. Required by the `typesafe` modes and by every `laya_then_*` mode that names TypeSafe. |
 | `OPENROUTER_API_KEY` | unset | Credential for the OpenRouter route. Required by the `openrouter` modes and by every `laya_then_*` mode that names OpenRouter. |
 | `LAYA_API_KEY` | unset | Optional bearer for a `laya-serve` started with its own `LAYA_API_KEY`. The local hop needs no credential. |
@@ -329,6 +329,30 @@ Laya always answers first, from the local server. A local attempt that fails fal
 **The privacy consequence, stated plainly.** In a `laya_then_*` mode the case state leaves the machine whenever the local attempt fails: that egress to a hosted API is the point of the mode, not a side effect. The plain `laya` route never leaves the machine, because it has no hosted hop at all. Choose `laya` when no egress is acceptable, and a `laya_then_*` mode when local first with a hosted backstop is worth that exposure. Nothing in a `laya_then_*` mode is sent to a hosted API while the local server answers, and the local hop still sends no credential.
 
 The question shapes and the score scale are the local server's, because the local hop is the one that runs first: the `laya_then_*` modes validate the same ordered `score` criteria and enforce the same legend index scale as `laya`.
+
+### DOGA selector aliases
+
+The DOGA fork names the same three arrangements `jev_api`, `laya_local`, and `laya_with_jev_fallback`. Two of those names are accepted here as aliases of the canonical modes, so a setting written for DOGA works unchanged. The mapping is a table in `jev_client.MODE_ALIASES`, and it is the whole mapping: nothing is inferred from the alias name at request time.
+
+| DOGA name | Accepted here? | Resolves to | Providers tried, in order |
+|---|---|---|---|
+| `jev_api` | No, and it needs no alias | `openrouter` by default, or `typesafe` | The hosted arrangement this repository already names four ways |
+| `laya_local` | Yes | `laya` | `laya` |
+| `laya_with_jev_fallback` | Yes | `laya_then_openrouter_typesafe` | `laya`, `openrouter`, then `typesafe` |
+
+`laya_local` is the plain local mode under DOGA's name: one provider, no hosted hop, and no egress. `laya_with_jev_fallback` is the local first chain that names **both** hosted providers, and the order is OpenRouter first and direct TypeSafe second. That order is not arbitrary: DOGA's own Jev route tries OpenRouter first and falls back to direct TypeSafe, and `openrouter` is this repository's default hosted provider. Naming both providers also means the chain is not weaker than DOGA's fallback, which can reach either one. A `laya_with_jev_fallback` selection therefore needs both `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY`, and a missing one fails at selection naming the variable.
+
+`jev_api` is not an accepted value, because the hosted arrangement it names already has four explicit mode names here. To match DOGA's Jev route exactly, including its OpenRouter-first order, set `JEV_PROVIDER_MODE=openrouter_then_typesafe`.
+
+An alias resolves to its canonical mode before anything routes, so it behaves identically to the mode it names: the same provider order, the same required keys, the same `provider_routing` block, and the same error. Anything that is not one of the nine canonical modes or the two aliases is rejected with an error listing every accepted value.
+
+### The consecutive failure breaker
+
+A local failure may reach a hosted provider only three times in a row. The count lives in `jev_client` as process state, so restarting the process resets it, and nothing is written to disk. Every local failure in a `laya_then_*` mode increments it; the first three are allowed to fall through to the named hosted provider, and the fourth and every one after it re-raises the local error with no hosted request at all. Any local answer that passes validation resets the count to zero, on both the plain local path and the chain path, so a server that recovers is trusted again immediately.
+
+The count tracks **local** failures only, so it bounds remote egress the same way in all four `laya_then_*` modes regardless of which hosted provider a mode names. The limit is hardcoded at three (`jev_client.LOCAL_FALLBACK_FAILURE_LIMIT`), and a suppressed fallback is reported at warning level before the local error is re-raised.
+
+Two honest limits come with it. The plain `laya` mode has no hosted hop, so a local failure there neither increments the count nor is suppressed: there is nothing to suppress. And a breaker bounds repeated remote egress after local **errors**; it cannot detect a valid yet incorrect local judgment. A confidently wrong local answer is returned as a healthy local answer and never reaches the hosted hop, which is why the quality evidence in the release notes matters more than the breaker.
 
 ### Question shapes on the local route
 

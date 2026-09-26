@@ -5,17 +5,35 @@ a local `laya-serve` process that needs no key at all, or an opt in chain that
 starts at the local server and falls through to one or both hosted providers.
 The plain local route replaces the hosted one rather than joining the chain. Only
 the `laya_then_*` modes let a failed local attempt reach a hosted provider.
+
+Two of DOGA's three selector names are accepted as aliases for the arrangements
+above: `laya_local` for the plain local mode, and `laya_with_jev_fallback` for the
+local first chain that names both hosted providers. `MODE_ALIASES` holds the
+mapping, and `resolve_mode` turns either vocabulary into the one canonical mode
+name every code path below uses.
+
+A local failure may reach a hosted provider only until it has failed three times
+in a row. The count is per process, so a restart resets it, and any local answer
+that passes validation resets it too. Past the limit the local error is re-raised
+and no hosted request is made, which bounds repeated remote egress however the
+mode names its hosted providers. The count tracks local failures only, so it
+bounds egress identically across all four `laya_then_*` modes. It cannot detect a
+valid but incorrect local answer.
 """
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
+import threading
 import time
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 MODEL = "typesafe/jev-1.13"
@@ -41,6 +59,31 @@ PROVIDER_MODES = HOSTED_PROVIDER_MODES | LAYA_CHAIN_MODES | {LAYA_PROVIDER}
 # A provider bound to the local machine carries no credential requirement, so an
 # empty key means "send no Authorization header", not "disabled".
 KEYLESS_PROVIDERS = frozenset({LAYA_PROVIDER})
+# DOGA names three arrangements: `jev_api`, `laya_local`, and
+# `laya_with_jev_fallback`. The first is the hosted arrangement this repository
+# already has under its own hosted mode names, so it needs no alias. The other two
+# are accepted here and resolved to a canonical mode before anything routes:
+#
+#   laya_local             -> laya
+#   laya_with_jev_fallback -> laya_then_openrouter_typesafe
+#
+# The chain is spelled out rather than implied. DOGA's own Jev route tries
+# OpenRouter first and direct TypeSafe second, and `openrouter` is this
+# repository's default hosted provider, so the local first chain that names both
+# hosted providers in that order is the faithful mapping. Nothing here is inferred
+# from the alias name at request time; the table is the whole mapping.
+MODE_ALIASES: dict[str, str] = {
+    "laya_local": LAYA_PROVIDER,
+    "laya_with_jev_fallback": "laya_then_openrouter_typesafe",
+}
+# Every value `JEV_PROVIDER_MODE` accepts: the canonical modes plus the aliases.
+ACCEPTED_MODES = frozenset(PROVIDER_MODES | set(MODE_ALIASES))
+# Consecutive local failure limit. The first three consecutive local failures in a
+# process may fall through to a hosted provider; the fourth and every one after it
+# re-raises the local error instead. Hardcoded, per process, and never persisted.
+LOCAL_FALLBACK_FAILURE_LIMIT = 3
+_local_failure_lock = threading.Lock()
+_local_failure_count = 0
 # The environment variable that carries each hosted provider's credential.
 PROVIDER_KEY_ENV = {TYPESAFE_PROVIDER: "TYPESAFE_API_KEY", OPENROUTER_PROVIDER: "OPENROUTER_API_KEY"}
 FALLBACK_ORDER: dict[str, tuple[str, ...]] = {
@@ -70,20 +113,35 @@ class JevSchemaError(JevClientError):
     """The provider returned a response outside the typed contract."""
 
 
+def resolve_mode(name: str) -> str:
+    """The canonical mode an accepted name selects, or an error naming the accepted set.
+
+    Two vocabularies name the same arrangements: this repository's own mode names,
+    and the DOGA selector aliases in ``MODE_ALIASES``. Resolution happens once,
+    here, so every code path below sees a canonical mode and no routing decision
+    depends on which vocabulary the caller used.
+    """
+    if name in PROVIDER_MODES:
+        return name
+    alias = MODE_ALIASES.get(name)
+    if alias is None:
+        raise JevClientError(
+            f"JEV_PROVIDER_MODE must be one of: {', '.join(sorted(ACCEPTED_MODES))}"
+        )
+    return alias
+
+
 def provider_mode(value: str | None = None) -> str:
     """Return the selected route, defaulting to the legacy OpenRouter path.
 
     ``laya`` selects a local server instead of a hosted provider: a replacement
     for the hosted pair, not a third member of it. The ``laya_then_*`` modes are
     the opt in chains, where a failed local attempt falls through to the named
-    hosted provider or providers.
+    hosted provider or providers. The DOGA aliases ``laya_local`` and
+    ``laya_with_jev_fallback`` are accepted and resolve to the modes above.
     """
     selected = (value or os.environ.get("JEV_PROVIDER_MODE", "openrouter")).strip().lower()
-    if selected not in PROVIDER_MODES:
-        raise JevClientError(
-            f"JEV_PROVIDER_MODE must be one of: {', '.join(sorted(PROVIDER_MODES))}"
-        )
-    return selected
+    return resolve_mode(selected)
 
 
 def validate_fallback_order(names: Any) -> tuple[str, ...]:
@@ -130,8 +188,10 @@ def provider_order(mode: str) -> tuple[str, ...]:
     ``laya_then_*`` mode starts at the local server and names one or both hosted
     providers after it. The plain local mode is exactly one: itself. Only a mode
     that names the local route reaches it, so selecting a hosted mode never
-    contacts a local server by accident and no mode appends Laya silently.
+    contacts a local server by accident and no mode appends Laya silently. A DOGA
+    alias is resolved first, so it reports the order of the mode it aliases.
     """
+    mode = resolve_mode(mode)
     if mode == LAYA_PROVIDER:
         return (LAYA_PROVIDER,)
     return validate_fallback_order(FALLBACK_ORDER.get(mode, (mode,)))
@@ -149,6 +209,33 @@ def provider_keys(mode: str) -> tuple[str, ...]:
 def uses_local_hop(mode: str) -> bool:
     """True when a mode begins at the local server and needs the longer local budget."""
     return provider_order(mode)[0] in KEYLESS_PROVIDERS
+
+
+def _note_local_failure() -> bool:
+    """Count one consecutive local failure; True when the hosted fallback is now suppressed.
+
+    The limit is hardcoded at three. The first three consecutive local failures may
+    fall through to a hosted provider; every one after that re-raises the local
+    error instead, because a local server that has failed four times in a row is
+    not a transient fault and should not keep turning reviews into remote traffic.
+    """
+    global _local_failure_count
+    with _local_failure_lock:
+        _local_failure_count += 1
+        return _local_failure_count > LOCAL_FALLBACK_FAILURE_LIMIT
+
+
+def _reset_local_failures() -> None:
+    """Restart the consecutive count after any local answer that passed validation."""
+    global _local_failure_count
+    with _local_failure_lock:
+        _local_failure_count = 0
+
+
+def local_failure_count() -> int:
+    """This process's consecutive local failure count, for tests and telemetry."""
+    with _local_failure_lock:
+        return _local_failure_count
 
 
 def validate_laya_endpoint(url: str) -> str:
@@ -316,6 +403,9 @@ def request_decisions(
         answers = validate_answers(response.get("answers"), questions)
         if local:
             validate_laya_answers(answers, questions)
+            # A local answer that passes validation is a healthy local call, so the
+            # consecutive failure count restarts here.
+            _reset_local_failures()
         return {**response, "answers": answers}
     routes: list[tuple[str, str, str, str]] = []
     hosted_index = 0
@@ -346,6 +436,22 @@ def request_decisions(
             else:
                 result = _request_once(state, questions, route_key, endpoint, route_model, timeout)
         except JevClientError as exc:
+            # Only a chain has a hosted hop to fall through to, so only a chain counts
+            # a local failure or can suppress one. The plain local mode has neither a
+            # hosted hop nor anything to suppress, so its failure leaves the count alone.
+            if mode in LAYA_CHAIN_MODES and name in KEYLESS_PROVIDERS:
+                if _note_local_failure():
+                    # Only the exception class is logged, never the reviewed state.
+                    logger.warning(
+                        "local %s failed %d times in a row; hosted fallback suppressed, "
+                        "re-raising the local error",
+                        type(exc).__name__, LOCAL_FALLBACK_FAILURE_LIMIT,
+                    )
+                    raise
+                logger.warning(
+                    "local %s failed (%s); falling through to the hosted fallback",
+                    name, type(exc).__name__,
+                )
             errors.append(str(exc))
             attempts.append({"provider": name, "error": str(exc)})
             if len(routes) == 1:
@@ -355,6 +461,9 @@ def request_decisions(
             answers = result.get("answers")
             if isinstance(answers, dict):
                 validate_laya_answers(answers, questions)
+            # A local answer that passes validation is a healthy local call, so the
+            # consecutive failure count restarts here.
+            _reset_local_failures()
         return _with_routing(result, mode, routes, index, attempts)
     raise JevClientError("; ".join(errors))
 
