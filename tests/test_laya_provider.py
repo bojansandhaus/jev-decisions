@@ -298,6 +298,51 @@ def test_a_hosted_mode_with_an_injected_transport_is_unchanged():
     assert "provider_routing" not in result
 
 
+def test_the_approval_review_result_carries_the_routing_block(monkeypatch):
+    """The workflow result reports the provider that answered, like the client does."""
+    monkeypatch.setenv("JEV_PROVIDER_MODE", "laya_then_typesafe")
+    answers = {
+        "verdict": {"choice": "APPROVE", "confidence": 0.9},
+        "policy_allows": {"noul": 0.0},
+        "blast_radius": {"score": 0.2, "legend": {"0": "trivial", "1": "annoying", "2": "severe"}},
+        "self_advocating": {"noul": 0.0},
+        "reads_secrets": {"noul": 0.0},
+        "sends_outbound": {"noul": 0.0},
+    }
+    endpoints = []
+
+    def transport(payload, **kwargs):
+        endpoints.append(kwargs["endpoint"])
+        if kwargs["endpoint"].startswith("http://127.0.0.1"):
+            raise jev_client.JevClientError(f"{kwargs['endpoint']} connection refused")
+        return {"answers": dict(answers)}
+
+    result = approval_review.review_command("printf fixture", api_key="type-key", transport=transport)
+    assert result["success"] is True
+    assert endpoints == [LOCAL_DEFAULT, jev_client.TYPESAFE_ENDPOINT]
+    assert result["provider_routing"]["provider"] == "typesafe"
+    assert result["provider_routing"]["fallback_used"] is True
+
+
+def test_the_approval_review_result_on_a_hosted_mode_has_no_routing_block(monkeypatch):
+    monkeypatch.setenv("JEV_PROVIDER_MODE", "typesafe")
+    answers = {
+        "verdict": {"choice": "APPROVE", "confidence": 0.9},
+        "policy_allows": {"noul": 0.0},
+        "blast_radius": {"score": 0.2},
+        "self_advocating": {"noul": 0.0},
+        "reads_secrets": {"noul": 0.0},
+        "sends_outbound": {"noul": 0.0},
+    }
+
+    def transport(payload, **kwargs):
+        return {"answers": dict(answers)}
+
+    result = approval_review.review_command("printf fixture", api_key="type-key", transport=transport)
+    assert result["success"] is True
+    assert "provider_routing" not in result, "only a laya_then_* chain reports routing"
+
+
 def test_an_unknown_provider_mode_still_fails_closed(monkeypatch):
     monkeypatch.setenv("JEV_PROVIDER_MODE", "laya_local")
     with pytest.raises(jev_client.JevClientError, match="JEV_PROVIDER_MODE"):
