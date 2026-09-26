@@ -27,7 +27,7 @@ The default Hermes adapter sends this shape to OpenRouter's Decisions API:
 
 Keep `state` small and redacted. Put definitions in `criteria`, not in a free form prompt. Keep the question count bounded. Treat the returned answer as a recommendation.
 
-Two ways to answer that call, and you pick one: Jev over a TypeSafe or OpenRouter key, or Laya locally with no key. A local `laya-serve` process publishes the same `POST /v1/systemone` shape, so the payload above is unchanged except that `model` names a Laya checkpoint instead of a Jev model and no `Authorization` header is sent. `state` then stays on your machine. See [provider settings and the local route](reference.md#provider-settings-and-the-local-route).
+Three ways to answer that call, and you pick one: Jev over a TypeSafe or OpenRouter key, Laya locally with no key, or an opt in `laya_then_*` chain that answers locally first and falls through to the named hosted provider. A local `laya-serve` process publishes the same `POST /v1/systemone` shape, so the payload above is unchanged except that `model` names a Laya checkpoint instead of a Jev model and no `Authorization` header is sent. With plain `laya`, `state` never leaves your machine. In a `laya_then_*` mode, a local attempt that fails sends the case state to the named hosted API: that fallback is the point of the mode. The result carries a `provider_routing` block naming the provider that answered and whether a fallback happened. See [provider settings and the local route](reference.md#provider-settings-and-the-local-route).
 
 ## Adapter contract for another agent
 

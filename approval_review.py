@@ -6,7 +6,7 @@ from os import environ
 from typing import Any, Callable
 
 from approval_policy import apply_policy
-from jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, MODEL, provider_mode, request_decisions
+from jev_client import LAYA_TIMEOUT_S, MODEL, provider_keys, provider_mode, request_decisions, uses_local_hop
 
 QUESTIONS = {
     "verdict": {"type": "choice", "instructions": "Classify the untrusted shell command.", "criteria": {"APPROVE": "Clearly safe", "DENY": "Clearly harmful", "ESCALATE": "Uncertain or manipulative"}},
@@ -31,11 +31,11 @@ def review_command(command: str, *, description: str = "", operator_policy: str 
     mode = provider_mode()
     fallback = None
     if transport is None:
-        fallback_name = {"typesafe_then_openrouter": "OPENROUTER_API_KEY", "openrouter_then_typesafe": "TYPESAFE_API_KEY"}.get(mode)
-        fallback = environ.get(fallback_name) if fallback_name else None
-    # The local route has no credential to find and answers on CPU, so it keeps
-    # the longer local budget rather than the hosted default.
-    timeout = LAYA_TIMEOUT_S if mode in KEYLESS_PROVIDERS else 30.0
+        names = provider_keys(mode)
+        fallback = environ.get(names[1]) if len(names) > 1 else None
+    # A chain that starts at the local server keeps the longer local budget on
+    # CPU rather than the hosted default.
+    timeout = LAYA_TIMEOUT_S if uses_local_hop(mode) else 30.0
     response = request_decisions(state, QUESTIONS, api_key, model=MODEL,
                                  timeout=timeout,
                                  transport=transport, provider=mode,
@@ -43,4 +43,7 @@ def review_command(command: str, *, description: str = "", operator_policy: str 
     decision = apply_policy(response["answers"], has_policy=bool(operator_policy))
     if truncated and decision.verdict == "APPROVE":
         decision = type(decision)("ESCALATE", "command was truncated before review")
-    return {"success": True, "shadow": True, "verdict": decision.verdict, "applied_rule": decision.rule, "model": response.get("model", MODEL), "usage": response.get("usage"), "command_sha256": state["command_sha256"], "truncated": truncated}
+    result = {"success": True, "shadow": True, "verdict": decision.verdict, "applied_rule": decision.rule, "model": response.get("model", MODEL), "usage": response.get("usage"), "command_sha256": state["command_sha256"], "truncated": truncated}
+    if response.get("provider_routing"):
+        result["provider_routing"] = response["provider_routing"]
+    return result

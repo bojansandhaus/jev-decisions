@@ -129,9 +129,11 @@ These commands target the default Hermes profile and enable the tools for the CL
 
 The doctor should report successful discovery and registration of eight tools and three hooks. Hooks are the optional automatic checks; registering them does not switch them on.
 
-**For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, or `laya`. The default remains `openrouter`. It runs Jev over a TypeSafe or OpenRouter key, or over Laya locally with no key. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`.
+**For Jev model reviews, choose a provider with `JEV_PROVIDER_MODE`**: `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, `laya`, or an opt in chain that starts at the local server and falls through to a hosted provider: `laya_then_typesafe`, `laya_then_openrouter`, `laya_then_typesafe_openrouter`, or `laya_then_openrouter_typesafe`. The default remains `openrouter`. It runs Jev over a TypeSafe or OpenRouter key, or over Laya locally with no key. The plugin reads `TYPESAFE_API_KEY` for direct TypeSafe access and `OPENROUTER_API_KEY` for OpenRouter access from the active Hermes secret scope. Do not paste a key into chat or save it in this repository. The direct route uses `https://api.typesafe.ai/v1/systemone` and model `jev-1.13.0`; the OpenRouter route uses `https://openrouter.ai/api/alpha/decisions` and model `typesafe/jev-1.13`. A `laya_then_*` mode needs the key of every hosted provider it names and fails at selection, naming the missing variable, when one is absent.
 
-**The local option is a replacement, not a third provider.** `JEV_PROVIDER_MODE=laya` answers from a `laya-serve` process on your own machine and needs no key at all. It is exactly one provider, no hosted mode ever selects it, and it has no hosted fallback. Point it at your server with `JEV_LAYA_BASE_URL` (default `http://127.0.0.1:8123`) and name the checkpoint with `JEV_LAYA_MODEL` (default `english`). `LAYA_API_KEY` is sent only if your server was started with its own bearer check; otherwise the `Authorization` header is omitted entirely. See [the measured limits of the base checkpoint](docs/reference.md#measured-limits-of-the-local-checkpoint) before you rely on it.
+**The local option is a replacement, not a third provider.** `JEV_PROVIDER_MODE=laya` answers from a `laya-serve` process on your own machine and needs no key at all. On its own it is exactly one provider, no hosted mode ever selects it, and it has no hosted fallback. Point it at your server with `JEV_LAYA_BASE_URL` (default `http://127.0.0.1:8123`) and name the checkpoint with `JEV_LAYA_MODEL` (default `english`). `LAYA_API_KEY` is sent only if your server was started with its own bearer check; otherwise the `Authorization` header is omitted entirely. See [the measured limits of the base checkpoint](docs/reference.md#measured-limits-of-the-local-checkpoint) before you rely on it.
+
+**The `laya_then_*` modes are the opt in chain, and they are the one place a failed local attempt reaches a hosted API.** Laya answers first from the local server; if that hop fails, the named hosted provider or providers answer in the order the mode gives. So `laya_then_typesafe` locally reviews first and sends the case state to TypeSafe only when the local server does not answer. That egress is the point of the mode, and it is why `laya` and `laya_then_*` are separate choices: the plain local route never leaves the machine, while these modes do fall back to a hosted API. Each answer reports which provider answered and whether a fallback happened, under `provider_routing` in the result. Because a chain can only fall through to a provider that can authenticate, a missing `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` stops the mode at selection rather than after the local review has already been sent.
 
 Start a fresh Hermes process after installation. For the desktop app or a gateway, restart the backend that runs your sessions. Opening another conversation in an unchanged backend may not load new plugin code.
 
@@ -220,7 +222,7 @@ The lifecycle is adapted from the design of psygns's osENV.io. See `THIRD_PARTY_
 
 **Reviews see what Hermes supplies.** Jev cannot check a document it has not been shown or confirm a delivery without evidence from the sending system. A high confidence score can still accompany a wrong answer.
 
-**Model reviews leave your machine, unless you run them locally.** A hosted review sends the relevant text to OpenRouter and its model provider. The local rule checks do not make those requests. `JEV_PROVIDER_MODE=laya` instead sends the text to a `laya-serve` process on your own machine, which needs no key and makes no outbound request. Redaction reduces some exposure but cannot guarantee that private information has been removed, and a local server removes the egress rather than the risk of storing what you send it.
+**Model reviews leave your machine, unless you run them locally.** A hosted review sends the relevant text to OpenRouter and its model provider. The local rule checks do not make those requests. `JEV_PROVIDER_MODE=laya` instead sends the text to a `laya-serve` process on your own machine, which needs no key and makes no outbound request. A `laya_then_*` mode sends the text to that local server first, and sends the case state to the named hosted API when the local attempt fails. Redaction reduces some exposure but cannot guarantee that private information has been removed, and a local server removes the egress rather than the risk of storing what you send it.
 
 **Records stay on disk until you manage them.** Automatic tool records omit raw arguments and results in favor of hashes, lengths, and review information. Manual journal entries save the text and evidence supplied to them. Protect the records and decide how long to retain them; disabling the plugin does not delete them.
 
@@ -244,7 +246,7 @@ A review that finds no issue is still bounded by its input. If the source was st
 
 ### What should I try first if I only have a few minutes?
 
-Run the harmless local backup check in [Try it in a conversation](#try-it-in-a-conversation). It confirms that Hermes can call the plugin without a provider key. Then review a short synthetic plan with `plan_review` to test the hosted connection, or your local Laya server if you pinned `JEV_PROVIDER_MODE=laya`. Neither example needs permission to change your files.
+Run the harmless local backup check in [Try it in a conversation](#try-it-in-a-conversation). It confirms that Hermes can call the plugin without a provider key. Then review a short synthetic plan with `plan_review` to test the hosted connection, or your local Laya server if you pinned `JEV_PROVIDER_MODE=laya` or a `laya_then_*` mode. Neither example needs permission to change your files.
 
 ### Should I ask for a review on every task?
 
@@ -264,7 +266,7 @@ No. Your usual model continues the conversation and performs the task. The plugi
 
 ### Is there a subscription or extra charge?
 
-The plugin is MIT licensed. Jev requests through OpenRouter may incur usage charges under your account. See [current model pricing](https://openrouter.ai/typesafe/jev-1.13). A local Laya route costs no provider request at all, and local rule checks and local records need no paid provider request either. See [the local option](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider).
+The plugin is MIT licensed. Jev requests through OpenRouter may incur usage charges under your account. See [current model pricing](https://openrouter.ai/typesafe/jev-1.13). A local Laya route costs no provider request at all, and local rule checks and local records need no paid provider request either. A `laya_then_*` mode costs nothing while the local server answers, and charges the hosted provider only when it falls through. See [the local option](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider).
 
 ### Why use this instead of asking Hermes to double-check itself?
 
@@ -276,18 +278,18 @@ No. Keep Hermes's existing approval settings. The plugin recommends when to ask 
 
 ### Can I use it without sending anything to OpenRouter?
 
-Yes, in two different ways. For the local approval and verification rules and local records, leave automatic reviews off and avoid the model review tools. For the model reviews themselves, run Laya locally instead of a hosted provider, which sends nothing off your machine and needs no key; see [Can I run it locally with Laya instead of a hosted provider?](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider). Reviews that read and judge the meaning of a plan, message, or answer require either a hosted Jev provider or that local server; there is no third option.
+Yes, in two different ways. For the local approval and verification rules and local records, leave automatic reviews off and avoid the model review tools. For the model reviews themselves, run Laya locally instead of a hosted provider, which sends nothing off your machine and needs no key; see [Can I run it locally with Laya instead of a hosted provider?](#can-i-run-it-locally-with-laya-instead-of-a-hosted-provider). Reviews that read and judge the meaning of a plan, message, or answer require either a hosted Jev provider or that local server; there is no third option. The `laya_then_*` modes are local first, but they do send the case state to the named hosted API whenever the local server fails, so choose plain `laya` if no egress at all is the requirement.
 
 ### Can I run it locally with Laya instead of a hosted provider?
 
-Yes. Two arrangements exist and you pick one: Jev over a TypeSafe or OpenRouter key, or Laya locally with no key. Laya is a typed decision model you run yourself, and the `laya-serve` server it ships publishes the same `POST /v1/systemone` contract, so the plugin scores through a process on your own machine with no key and no outbound request:
+Yes. Three arrangements exist and you pick one: Jev over a TypeSafe or OpenRouter key, Laya locally with no key, or a local first chain that falls through to a hosted provider. Laya is a typed decision model you run yourself, and the `laya-serve` server it ships publishes the same `POST /v1/systemone` contract, so the plugin scores through a process on your own machine with no key and no outbound request:
 
 ```bash
 python3 -m pip install laya
 laya-serve --help          # LAYA_HOST, LAYA_PORT, LAYA_DEVICE, LAYA_THREADS, LAYA_MODEL, LAYA_API_KEY
 ```
 
-Then set `JEV_PROVIDER_MODE=laya` in the environment of the Hermes process that runs your sessions. `JEV_LAYA_BASE_URL` defaults to `http://127.0.0.1:8123`, `JEV_LAYA_ENDPOINT_PATH` to `/v1/systemone`, and `JEV_LAYA_MODEL` to `english`, which names the checkpoint your server is serving. The local route is exactly one provider: it replaces the hosted pair rather than joining it, no hosted mode ever selects it, and it is rejected as a fallback member.
+Then set `JEV_PROVIDER_MODE=laya` in the environment of the Hermes process that runs your sessions. `JEV_LAYA_BASE_URL` defaults to `http://127.0.0.1:8123`, `JEV_LAYA_ENDPOINT_PATH` to `/v1/systemone`, and `JEV_LAYA_MODEL` to `english`, which names the checkpoint your server is serving. Plain `laya` is exactly one provider: it replaces the hosted pair rather than joining it, no hosted mode ever selects it, and no mode appends it silently. The `laya_then_*` modes are the explicit opt in that puts Laya first, keeps the local score on the same legend index scale, and names the hosted provider or providers that answer when the local server does not.
 
 Three measured limits, from live runs against `laya-serve` on CPU with the base English checkpoint, are worth knowing before you point real work at it. It is slow: about 1.6 seconds per question row, and model load takes 25 to 35 seconds. Its answers are weakly separated, so the approval policy's confidence floor tends to escalate instead of approving. And no quality claim is made for this base checkpoint. The numbers and the score scale are in [the reference](docs/reference.md#measured-limits-of-the-local-checkpoint). Calibrate on your own labelled examples first.
 
@@ -301,7 +303,7 @@ It records decisions and outcomes for later review. It does not train the model,
 
 ### The plugin is installed, but Hermes cannot find its tools. What should I check?
 
-Run `hermes plugins doctor jev-decisions`. Check that both the plugin and the `jev` toolset are enabled in the profile and platform you are using, then restart the relevant Hermes process. If model reviews fail, check the route that process selected: with a hosted mode, the matching `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` must be available to it, and a key set in a different terminal will not necessarily be available to the desktop backend. With `JEV_PROVIDER_MODE=laya`, check that `laya-serve` is listening on `JEV_LAYA_BASE_URL` and that `JEV_LAYA_MODEL` names the checkpoint it actually serves.
+Run `hermes plugins doctor jev-decisions`. Check that both the plugin and the `jev` toolset are enabled in the profile and platform you are using, then restart the relevant Hermes process. If model reviews fail, check the route that process selected: with a hosted mode, the matching `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` must be available to it, and a key set in a different terminal will not necessarily be available to the desktop backend. With `JEV_PROVIDER_MODE=laya`, check that `laya-serve` is listening on `JEV_LAYA_BASE_URL` and that `JEV_LAYA_MODEL` names the checkpoint it actually serves. With a `laya_then_*` mode, check all three: the local server must answer for the review to stay home, and every hosted provider the mode names needs its key available, or the review fails at selection with the variable named in the error.
 
 ### Can I use it with another agent?
 

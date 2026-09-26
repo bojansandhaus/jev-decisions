@@ -1,8 +1,10 @@
 """Shared bounded client for Jev over a TypeSafe or OpenRouter key, or Laya locally.
 
-Two mutually exclusive ways to answer a typed question: a hosted Jev provider
-behind an API key, or a local `laya-serve` process that needs no key at all.
-The local route replaces the hosted one rather than joining the fallback chain.
+Three arrangements for a typed question: a hosted Jev provider behind an API key,
+a local `laya-serve` process that needs no key at all, or an opt in chain that
+starts at the local server and falls through to one or both hosted providers.
+The plain local route replaces the hosted one rather than joining the chain. Only
+the `laya_then_*` modes let a failed local attempt reach a hosted provider.
 """
 from __future__ import annotations
 
@@ -26,13 +28,28 @@ HOSTED_PROVIDER_MODES = frozenset({
     TYPESAFE_PROVIDER, OPENROUTER_PROVIDER,
     "typesafe_then_openrouter", "openrouter_then_typesafe",
 })
-PROVIDER_MODES = HOSTED_PROVIDER_MODES | {LAYA_PROVIDER}
+# Local first chains. Laya answers from the local server, and a failed local
+# attempt falls through to the named hosted providers in the order given. These
+# are the only modes where one review can reach both a local and a hosted route.
+LAYA_CHAIN_MODES = frozenset({
+    "laya_then_typesafe",
+    "laya_then_openrouter",
+    "laya_then_typesafe_openrouter",
+    "laya_then_openrouter_typesafe",
+})
+PROVIDER_MODES = HOSTED_PROVIDER_MODES | LAYA_CHAIN_MODES | {LAYA_PROVIDER}
 # A provider bound to the local machine carries no credential requirement, so an
 # empty key means "send no Authorization header", not "disabled".
 KEYLESS_PROVIDERS = frozenset({LAYA_PROVIDER})
+# The environment variable that carries each hosted provider's credential.
+PROVIDER_KEY_ENV = {TYPESAFE_PROVIDER: "TYPESAFE_API_KEY", OPENROUTER_PROVIDER: "OPENROUTER_API_KEY"}
 FALLBACK_ORDER: dict[str, tuple[str, ...]] = {
     "typesafe_then_openrouter": (TYPESAFE_PROVIDER, OPENROUTER_PROVIDER),
     "openrouter_then_typesafe": (OPENROUTER_PROVIDER, TYPESAFE_PROVIDER),
+    "laya_then_typesafe": (LAYA_PROVIDER, TYPESAFE_PROVIDER),
+    "laya_then_openrouter": (LAYA_PROVIDER, OPENROUTER_PROVIDER),
+    "laya_then_typesafe_openrouter": (LAYA_PROVIDER, TYPESAFE_PROVIDER, OPENROUTER_PROVIDER),
+    "laya_then_openrouter_typesafe": (LAYA_PROVIDER, OPENROUTER_PROVIDER, TYPESAFE_PROVIDER),
 }
 LAYA_BASE_URL_DEFAULT = "http://127.0.0.1:8123"
 LAYA_ENDPOINT_PATH_DEFAULT = "/v1/systemone"
@@ -56,8 +73,10 @@ class JevSchemaError(JevClientError):
 def provider_mode(value: str | None = None) -> str:
     """Return the selected route, defaulting to the legacy OpenRouter path.
 
-    ``laya`` selects a local server instead of a hosted provider. It is a
-    replacement for the hosted pair, not a third member of it.
+    ``laya`` selects a local server instead of a hosted provider: a replacement
+    for the hosted pair, not a third member of it. The ``laya_then_*`` modes are
+    the opt in chains, where a failed local attempt falls through to the named
+    hosted provider or providers.
     """
     selected = (value or os.environ.get("JEV_PROVIDER_MODE", "openrouter")).strip().lower()
     if selected not in PROVIDER_MODES:
@@ -68,32 +87,68 @@ def provider_mode(value: str | None = None) -> str:
 
 
 def validate_fallback_order(names: Any) -> tuple[str, ...]:
-    """Return an ordered provider chain, rejecting anything that is not hosted.
+    """Return an ordered provider chain, rejecting any shape a mode does not name.
 
-    A local Laya route cannot appear here: it replaces the hosted providers
-    rather than being tried after one of them fails, and it has no key to
-    authenticate a fallback hop.
+    A hosted chain is one or two hosted providers. A local first chain may begin
+    with Laya, which is keyless, and then name the hosted providers that answer a
+    failed local attempt. Laya may only be the first member: it never trails a
+    hosted provider, because a local server replaces the hosted route rather than
+    being tried after one of them fails. A chain alone is not a mode, so
+    ``(LAYA_PROVIDER,)`` is rejected here; the plain local mode is selected by its
+    own name instead.
     """
     order = tuple(names)
-    for name in order:
-        if name not in HOSTED_PROVIDER_MODES:
+    if not order:
+        raise JevClientError("invalid Jev fallback order: the chain is empty")
+    for index, name in enumerate(order):
+        if name not in PROVIDER_MODES:
             raise JevClientError(
-                f"invalid Jev fallback order: {name!r} is not a hosted Jev provider; "
-                "Laya runs locally in place of the hosted providers instead of joining them"
+                f"invalid Jev fallback order: {name!r} is not a Jev provider; "
+                f"choose one of {', '.join(sorted(PROVIDER_MODES))}"
             )
+        if name != LAYA_PROVIDER:
+            continue
+        if index != 0:
+            raise JevClientError(
+                "invalid Jev fallback order: Laya is a local provider, not a hosted Jev "
+                "provider, so it cannot follow a hosted hop"
+            )
+        if len(order) == 1:
+            raise JevClientError(
+                "invalid Jev fallback order: Laya alone is a local provider, not a hosted "
+                "Jev provider chain, and the plain local mode is selected by name"
+            )
+    if len(order) != len(set(order)):
+        raise JevClientError(f"invalid Jev fallback order: {order!r} names a provider twice")
     return order
 
 
 def provider_order(mode: str) -> tuple[str, ...]:
     """The providers a mode uses, in the order it tries them.
 
-    A pinned hosted mode is one provider, a chained hosted mode is two, and the
-    local mode is exactly one: itself. No hosted mode ever yields the local
-    route, so selecting a key never reaches a local server by accident.
+    A pinned hosted mode is one provider and a chained hosted mode is two. A
+    ``laya_then_*`` mode starts at the local server and names one or both hosted
+    providers after it. The plain local mode is exactly one: itself. Only a mode
+    that names the local route reaches it, so selecting a hosted mode never
+    contacts a local server by accident and no mode appends Laya silently.
     """
     if mode == LAYA_PROVIDER:
         return (LAYA_PROVIDER,)
     return validate_fallback_order(FALLBACK_ORDER.get(mode, (mode,)))
+
+
+def _hosted_key_names(order: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(PROVIDER_KEY_ENV[name] for name in order if name not in KEYLESS_PROVIDERS)
+
+
+def provider_keys(mode: str) -> tuple[str, ...]:
+    """Environment variable names for a mode's hosted providers, in chain order."""
+    return _hosted_key_names(provider_order(mode))
+
+
+def uses_local_hop(mode: str) -> bool:
+    """True when a mode begins at the local server and needs the longer local budget."""
+    return provider_order(mode)[0] in KEYLESS_PROVIDERS
 
 
 def validate_laya_endpoint(url: str) -> str:
@@ -237,17 +292,21 @@ def request_decisions(
     if not isinstance(questions, dict) or not questions:
         raise JevSchemaError("questions must be a non-empty object")
     mode = provider_mode(provider)
+    order = provider_order(mode)
+    local_first = order[0] in KEYLESS_PROVIDERS
     local = mode in KEYLESS_PROVIDERS
     if local and fallback_api_key:
         raise JevClientError(
             "JEV_PROVIDER_MODE=laya answers from a local server in place of the hosted "
             "providers, so there is no hosted fallback to authenticate"
         )
-    if local:
+    if mode in LAYA_CHAIN_MODES:
+        _require_hosted_keys(mode, order, api_key, fallback_api_key)
+    if local_first:
         validate_laya_questions(questions)
-    route_model = laya_route()[1] if local else model
-    local_key = laya_key() if local else (api_key or "")
-    if transport is not None:
+    if transport is not None and mode not in LAYA_CHAIN_MODES:
+        route_model = laya_route()[1] if local else model
+        local_key = laya_key() if local else (api_key or "")
         if not local and (not api_key or not isinstance(api_key, str)):
             raise JevClientError("an API key is required for Jev reviews")
         payload = {"model": route_model, "state": state, "questions": questions}
@@ -259,11 +318,13 @@ def request_decisions(
             validate_laya_answers(answers, questions)
         return {**response, "answers": answers}
     routes: list[tuple[str, str, str, str]] = []
-    for index, name in enumerate(provider_order(mode)):
+    hosted_index = 0
+    for name in order:
         if name in KEYLESS_PROVIDERS:
             key = laya_key()
         else:
-            key = api_key if index == 0 else fallback_api_key
+            key = api_key if hosted_index == 0 else fallback_api_key
+            hosted_index += 1
         if name == LAYA_PROVIDER:
             endpoint, route_model = laya_route()
         elif name == TYPESAFE_PROVIDER:
@@ -272,14 +333,21 @@ def request_decisions(
             endpoint, route_model = ENDPOINT, model
         routes.append((name, endpoint, route_model, key or ""))
     errors: list[str] = []
-    for name, endpoint, route_model, route_key in routes:
+    attempts: list[dict[str, str]] = []
+    for index, (name, endpoint, route_model, route_key) in enumerate(routes):
         if not route_key and name not in KEYLESS_PROVIDERS:
-            errors.append(f"{endpoint}: missing API key")
+            message = f"{endpoint}: missing API key"
+            errors.append(message)
+            attempts.append({"provider": name, "error": message})
             continue
         try:
-            result = _request_once(state, questions, route_key, endpoint, route_model, timeout)
+            if transport is not None:
+                result = _transport_once(transport, state, questions, route_key, endpoint, route_model, timeout)
+            else:
+                result = _request_once(state, questions, route_key, endpoint, route_model, timeout)
         except JevClientError as exc:
             errors.append(str(exc))
+            attempts.append({"provider": name, "error": str(exc)})
             if len(routes) == 1:
                 raise
             continue
@@ -287,8 +355,60 @@ def request_decisions(
             answers = result.get("answers")
             if isinstance(answers, dict):
                 validate_laya_answers(answers, questions)
-        return result
+        return _with_routing(result, mode, routes, index, attempts)
     raise JevClientError("; ".join(errors))
+
+
+def _require_hosted_keys(mode: str, order: tuple[str, ...], api_key: Any, fallback_api_key: Any) -> None:
+    """Fail a ``laya_then_*`` selection when a named hosted provider has no key.
+
+    The local attempt is allowed to fail, but only when the hosted hop it falls
+    through to can actually run. A missing key is a selection error, so it is
+    raised here, naming the environment variable, rather than surfacing later as a
+    failed request after the local review was already sent.
+    """
+    keys = (api_key, fallback_api_key)
+    missing = [
+        name for index, name in enumerate(_hosted_key_names(order))
+        if not keys[index]
+    ]
+    if missing:
+        raise JevClientError(
+            f"JEV_PROVIDER_MODE={mode} needs {', '.join(missing)} for its hosted fallback"
+        )
+
+
+def _transport_once(transport: Callable[..., Any], state: Any, questions: dict[str, Any],
+                    api_key: str, endpoint: str, model: str, timeout: float) -> dict[str, Any]:
+    """One chain hop through an injected transport, so a test can watch the route."""
+    payload = {"model": model, "state": state, "questions": questions}
+    response = transport(payload, api_key=api_key, timeout=timeout, endpoint=endpoint)
+    if not isinstance(response, dict):
+        raise JevSchemaError("transport returned a non-object")
+    answers = validate_answers(response.get("answers"), questions)
+    return {**response, "answers": answers}
+
+
+def _with_routing(result: dict[str, Any], mode: str, routes: list[tuple[str, str, str, str]],
+                  answered_index: int, attempts: list[dict[str, str]]) -> dict[str, Any]:
+    """Add the routing diagnostics a ``laya_then_*`` chain has to report.
+
+    Only the local first chains add this block, so the hosted modes and the plain
+    local mode keep returning exactly the provider's own response. `provider` is
+    the hop that answered, `fallback_used` says whether the successful hop was a
+    fallback, and `attempts` records the earlier hops that failed.
+    """
+    if mode not in LAYA_CHAIN_MODES:
+        return result
+    return {
+        **result,
+        "provider_routing": {
+            "provider": routes[answered_index][0],
+            "provider_order": [name for name, *_ in routes],
+            "fallback_used": answered_index > 0,
+            "attempts": list(attempts),
+        },
+    }
 
 
 def _request_once(state: Any, questions: dict[str, Any], api_key: str,

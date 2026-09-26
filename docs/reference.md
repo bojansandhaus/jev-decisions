@@ -295,19 +295,40 @@ Returned probabilities and confidence describe the model's judgment. They do not
 
 ## Provider settings and the local route
 
-There are two mutually exclusive ways to answer a typed question: Jev over a hosted API key, or Laya locally with no key. You pick one with `JEV_PROVIDER_MODE`.
+There are three ways to answer a typed question: Jev over a hosted API key, Laya locally with no key, or an opt in chain that starts at the local server and falls through to a hosted provider. You pick one with `JEV_PROVIDER_MODE`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `JEV_PROVIDER_MODE` | `openrouter` | `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, or `laya`. |
-| `TYPESAFE_API_KEY` | unset | Credential for the direct TypeSafe route. Required by the `typesafe` modes. |
-| `OPENROUTER_API_KEY` | unset | Credential for the OpenRouter route. Required by the `openrouter` modes. |
-| `LAYA_API_KEY` | unset | Optional bearer for a `laya-serve` started with its own `LAYA_API_KEY`. The local route needs no credential. |
+| `JEV_PROVIDER_MODE` | `openrouter` | `typesafe`, `openrouter`, `typesafe_then_openrouter`, `openrouter_then_typesafe`, `laya`, or a local first chain: `laya_then_typesafe`, `laya_then_openrouter`, `laya_then_typesafe_openrouter`, `laya_then_openrouter_typesafe`. |
+| `TYPESAFE_API_KEY` | unset | Credential for the direct TypeSafe route. Required by the `typesafe` modes and by every `laya_then_*` mode that names TypeSafe. |
+| `OPENROUTER_API_KEY` | unset | Credential for the OpenRouter route. Required by the `openrouter` modes and by every `laya_then_*` mode that names OpenRouter. |
+| `LAYA_API_KEY` | unset | Optional bearer for a `laya-serve` started with its own `LAYA_API_KEY`. The local hop needs no credential. |
 | `JEV_LAYA_BASE_URL` | `http://127.0.0.1:8123` | Local `laya-serve` base URL. Plain HTTP is accepted on `localhost`, `127.0.0.1`, and `::1`; any other host must be HTTPS. |
 | `JEV_LAYA_ENDPOINT_PATH` | `/v1/systemone` | The Decisions protocol path `laya-serve` publishes. |
 | `JEV_LAYA_MODEL` | `english` | The checkpoint the server serves. `english`, `multilingual`, and `typed-decisions` name a checkpoint directly. |
 
-`laya` is a replacement for the hosted pair, never a member of it. `laya` builds a chain of exactly one provider, no hosted mode ever selects it, and an order containing `laya` is rejected as a fallback. The wire client omits the `Authorization` header entirely when no key is configured, so a server started without `LAYA_API_KEY` accepts the request unchanged; an empty bearer is wrong and is not sent. Laya is an external package you install yourself, authored by Convai Innovations under Apache-2.0 at [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya); no Laya code ships in this repository.
+`laya` on its own is a replacement for the hosted pair, never a member of it. It builds a chain of exactly one provider, no hosted mode ever selects it, and no mode appends it silently. The wire client omits the `Authorization` header entirely when no key is configured, so a server started without `LAYA_API_KEY` accepts the request unchanged; an empty bearer is wrong and is not sent. Laya is an external package you install yourself, authored by Convai Innovations under Apache-2.0 at [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya); no Laya code ships in this repository.
+
+### Local first chains: Laya primary with a hosted fallback
+
+The four `laya_then_*` modes are the explicit opt in that the first two arrangements do not cover. The order is the literal reading of the mode name:
+
+| Mode | Providers tried, in order |
+|---|---|
+| `laya_then_typesafe` | `laya`, then `typesafe` |
+| `laya_then_openrouter` | `laya`, then `openrouter` |
+| `laya_then_typesafe_openrouter` | `laya`, `typesafe`, then `openrouter` |
+| `laya_then_openrouter_typesafe` | `laya`, `openrouter`, then `typesafe` |
+
+Laya always answers first, from the local server. A local attempt that fails falls through to the named hosted provider, and if that fails too, to the next one the mode names. Three rules hold, and each one is a test:
+
+- **Laya may lead a chain but never follow one.** A chain that puts `laya` after a hosted provider is rejected, and a chain of `laya` alone is rejected because the plain local mode is selected by its own name. `laya` is the only local provider, and it is never appended to a mode that does not name it.
+- **A named hosted provider needs its key before the local review is sent.** A missing `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is a selection error raised before any hop runs, naming the variable, rather than a failure discovered after the case state was already on the local server. That is why the mode can be trusted to fall through: the hop it falls through to can authenticate.
+- **The answer says which provider answered.** A `laya_then_*` result carries a `provider_routing` block: `provider` is the hop that answered, `provider_order` is the chain, `fallback_used` is true when the answering hop was a fallback, and `attempts` lists each earlier hop with its error. The hosted modes and the plain local mode return no such block, so their existing response shape is unchanged.
+
+**The privacy consequence, stated plainly.** In a `laya_then_*` mode the case state leaves the machine whenever the local attempt fails: that egress to a hosted API is the point of the mode, not a side effect. The plain `laya` route never leaves the machine, because it has no hosted hop at all. Choose `laya` when no egress is acceptable, and a `laya_then_*` mode when local first with a hosted backstop is worth that exposure. Nothing in a `laya_then_*` mode is sent to a hosted API while the local server answers, and the local hop still sends no credential.
+
+The question shapes and the score scale are the local server's, because the local hop is the one that runs first: the `laya_then_*` modes validate the same ordered `score` criteria and enforce the same legend index scale as `laya`.
 
 ### Question shapes on the local route
 

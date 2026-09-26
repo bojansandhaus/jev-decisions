@@ -41,9 +41,9 @@ try:
 except ImportError:
     from approval_policy import apply_policy
 try:
-    from .jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, provider_mode, request_decisions
+    from .jev_client import LAYA_TIMEOUT_S, provider_keys, provider_mode, request_decisions, uses_local_hop
 except ImportError:
-    from jev_client import KEYLESS_PROVIDERS, LAYA_TIMEOUT_S, provider_mode, request_decisions
+    from jev_client import LAYA_TIMEOUT_S, provider_keys, provider_mode, request_decisions, uses_local_hop
 try:
     from . import supervision as _supervision
 except ImportError:
@@ -108,38 +108,44 @@ JEV_DECIDE_SCHEMA = {
 
 
 def _secret() -> str:
-    """The active provider's credential, or none for the keyless local route."""
+    """The active mode's primary credential, or none when its chain starts local."""
     mode = provider_mode()
-    if mode in KEYLESS_PROVIDERS:
+    if mode == "laya":
         # A local server needs a credential only when it was started with its own
         # bearer check, which `LAYA_API_KEY` carries. Otherwise there is none.
         return get_secret("LAYA_API_KEY") or ""
-    primary = "TYPESAFE_API_KEY" if mode.startswith("typesafe") else "OPENROUTER_API_KEY"
-    value = get_secret(primary)
+    names = provider_keys(mode)
+    if not names:
+        return ""
+    value = get_secret(names[0])
     if not value:
-        raise RuntimeError(f"{primary} is not available in the active Hermes secret scope")
+        raise RuntimeError(f"{names[0]} is not available in the active Hermes secret scope")
     return value
 
 
 def _fallback_secret() -> str | None:
     mode = provider_mode()
-    # A local Laya route replaces the hosted providers instead of trailing them,
-    # so it has no fallback hop and no second credential to find.
-    if mode in KEYLESS_PROVIDERS: return None
-    if mode == "typesafe_then_openrouter": return get_secret("OPENROUTER_API_KEY")
-    if mode == "openrouter_then_typesafe": return get_secret("TYPESAFE_API_KEY")
-    return None
+    # The second hosted provider in a chain, when the chain names one. A local
+    # route that has no hosted fallback has no second credential to find.
+    names = provider_keys(mode)
+    return get_secret(names[1]) if len(names) > 1 else None
+
+
+def _routing(result: dict[str, Any]) -> dict[str, Any]:
+    """Surface a `laya_then_*` chain's routing block, when the review carries one."""
+    routing = result.get("provider_routing")
+    return {"provider_routing": routing} if routing else {}
 
 
 def _request(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
-    """One review through the selected route. `laya` needs no key and sends none."""
+    """One review through the selected route. Laya needs no key and sends none."""
     mode = provider_mode()
     if mode != "openrouter":
         return request_decisions(
             payload.get("state"), payload.get("questions", {}), api_key,
             model=payload.get("model") or _MODEL,
             provider=mode, fallback_api_key=_fallback_secret(),
-            timeout=LAYA_TIMEOUT_S if mode in KEYLESS_PROVIDERS else 30.0,
+            timeout=LAYA_TIMEOUT_S if uses_local_hop(mode) else 30.0,
         )
     body = json.dumps(payload).encode("utf-8")
     req = Request(
@@ -188,7 +194,7 @@ def jev_decide_handler(args: dict[str, Any], **_: Any) -> str:
             {"model": args.get("model") or _MODEL, "state": state, "questions": questions},
             _secret(),
         )
-        return json.dumps({"success": True, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage")})
+        return json.dumps({"success": True, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage"), **_routing(result)})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
@@ -404,7 +410,7 @@ def jev_workflow_handler(args: dict[str, Any], **kwargs: Any) -> str:
         return json.dumps({"error": "state must be text, an object, or an array"})
     try:
         result = _request({"model": args.get("model") or _MODEL, "state": state, "questions": _WORKFLOW_QUESTIONS[workflow]}, _secret())
-        output = {"success": True, "shadow": True, "workflow": workflow, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage")}
+        output = {"success": True, "shadow": True, "workflow": workflow, "model": result.get("model"), "answers": result["answers"], "usage": result.get("usage"), **_routing(result)}
         if workflow == "approval_review":
             decision = apply_policy(result["answers"], has_policy=bool(isinstance(state, dict) and state.get("operator_policy")))
             output.update({"verdict": decision.verdict, "applied_rule": decision.rule})
@@ -523,7 +529,7 @@ def _on_post_llm_call(
             {"model": _MODEL, "state": {"request": request, "draft": draft, "conversation_history": history}, "questions": _WORKFLOW_QUESTIONS["output_review"]},
             _secret(),
         )
-        record.update({"success": True, "model": result.get("model"), "answers": result.get("answers"), "usage": result.get("usage")})
+        record.update({"success": True, "model": result.get("model"), "answers": result.get("answers"), "usage": result.get("usage"), **_routing(result)})
         record["review_id"] = append_ledger("review", {"workflow": "output_review", "answers": result.get("answers")})
     except Exception as exc:
         record.update({"success": False, "error_type": type(exc).__name__})

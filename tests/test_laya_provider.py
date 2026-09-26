@@ -1,8 +1,10 @@
 """The local Laya route: keyless selection, wire shape, answer scales, live gate.
 
-Two mutually exclusive ways to answer a typed question: Jev over a TypeSafe or
-OpenRouter key, or Laya locally with no key. This file holds the local half.
-The live test is opt in, so CI stays deterministic and offline.
+Three arrangements for a typed question: Jev over a TypeSafe or OpenRouter key,
+Laya locally with no key, or an opt in ``laya_then_*`` chain that starts at the
+local server and falls through to the named hosted provider or providers. This
+file holds the local half, including the local first chains. The live tests are
+opt in, so CI stays deterministic and offline.
 """
 import importlib.util
 import json
@@ -115,6 +117,185 @@ def test_the_local_route_is_rejected_as_a_fallback_member():
     with pytest.raises(jev_client.JevClientError, match="not a hosted Jev provider"):
         jev_client.validate_fallback_order(("laya",))
     assert jev_client.validate_fallback_order(("typesafe", "openrouter")) == ("typesafe", "openrouter")
+
+
+# --- the local first chains: Laya primary with hosted fallback, opt in --------
+
+LAYA_CHAIN_ORDERS = {
+    "laya_then_typesafe": ("laya", "typesafe"),
+    "laya_then_openrouter": ("laya", "openrouter"),
+    "laya_then_typesafe_openrouter": ("laya", "typesafe", "openrouter"),
+    "laya_then_openrouter_typesafe": ("laya", "openrouter", "typesafe"),
+}
+
+
+@pytest.mark.parametrize("mode, expected", sorted(LAYA_CHAIN_ORDERS.items()))
+def test_a_local_first_chain_resolves_to_the_order_it_names(mode, expected, monkeypatch):
+    monkeypatch.setenv("JEV_PROVIDER_MODE", mode)
+    assert jev_client.provider_mode() == mode
+    assert jev_client.provider_order(mode) == expected
+    assert jev_client.uses_local_hop(mode) is True
+    assert jev_client.validate_fallback_order(expected) == expected
+
+
+def test_the_hosted_keys_a_local_first_chain_names_are_reported_in_order():
+    assert jev_client.provider_keys("laya_then_typesafe") == ("TYPESAFE_API_KEY",)
+    assert jev_client.provider_keys("laya_then_openrouter") == ("OPENROUTER_API_KEY",)
+    assert jev_client.provider_keys("laya_then_typesafe_openrouter") == ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY")
+    assert jev_client.provider_keys("laya_then_openrouter_typesafe") == ("OPENROUTER_API_KEY", "TYPESAFE_API_KEY")
+    assert jev_client.provider_keys("laya") == ()
+    assert jev_client.provider_keys("typesafe_then_openrouter") == ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY")
+
+
+def test_laya_may_lead_a_chain_but_never_follow_a_hosted_provider():
+    assert jev_client.validate_fallback_order(("laya", "openrouter")) == ("laya", "openrouter")
+    assert jev_client.validate_fallback_order(("laya", "typesafe", "openrouter")) == ("laya", "typesafe", "openrouter")
+    with pytest.raises(jev_client.JevClientError, match="not a hosted Jev provider"):
+        jev_client.validate_fallback_order(("typesafe", "laya"))
+    with pytest.raises(jev_client.JevClientError, match="names a provider twice"):
+        jev_client.validate_fallback_order(("laya", "typesafe", "typesafe"))
+    with pytest.raises(jev_client.JevClientError, match="names a provider twice"):
+        # Only two hosted providers exist, so a third hosted hop always repeats one.
+        jev_client.validate_fallback_order(("typesafe", "openrouter", "typesafe"))
+
+
+@pytest.mark.parametrize("mode, missing", [
+    ("laya_then_typesafe", "TYPESAFE_API_KEY"),
+    ("laya_then_openrouter", "OPENROUTER_API_KEY"),
+])
+def test_a_local_first_chain_fails_fast_when_its_hosted_key_is_absent(mode, missing):
+    called = []
+
+    def transport(payload, **kwargs):
+        called.append(kwargs["endpoint"])
+
+    with pytest.raises(jev_client.JevClientError, match=missing) as excinfo:
+        jev_client.request_decisions({}, QUESTIONS, None, provider=mode, transport=transport)
+    assert f"JEV_PROVIDER_MODE={mode}" in str(excinfo.value)
+    assert called == [], "a selection error must be raised before any hop is sent"
+
+
+def test_a_two_hosted_fallback_chain_names_each_missing_key():
+    with pytest.raises(jev_client.JevClientError) as excinfo:
+        jev_client.request_decisions({}, QUESTIONS, None, provider="laya_then_typesafe_openrouter",
+                                     transport=lambda payload, **kwargs: {})
+    message = str(excinfo.value)
+    assert "TYPESAFE_API_KEY" in message and "OPENROUTER_API_KEY" in message
+    with pytest.raises(jev_client.JevClientError, match="OPENROUTER_API_KEY"):
+        jev_client.request_decisions({}, QUESTIONS, "type-key", provider="laya_then_typesafe_openrouter",
+                                     transport=lambda payload, **kwargs: {})
+
+
+def routed_transport(local_answers=None, local_error=None):
+    """A synthetic transport that answers the local URL or fails it, recording each hop.
+
+    It is the fallback proof: no hosted credential exists on this machine, so the
+    hosted hop is never really called. The transport fails on the local URL the
+    way `_request_once` does, and the hosted attempt is recorded rather than sent.
+    """
+    hops = []
+
+    def transport(payload, **kwargs):
+        endpoint = kwargs["endpoint"]
+        hops.append({"endpoint": endpoint, "model": payload["model"], "api_key": kwargs["api_key"]})
+        if endpoint.startswith("http://127.0.0.1"):
+            if local_error:
+                raise jev_client.JevClientError(f"{endpoint} {local_error}")
+            return {"model": "laya-rl-agent", "answers": dict(local_answers or ANSWERS)}
+        return {"model": "hosted-jev", "answers": dict(ANSWERS)}
+
+    return transport, hops
+
+
+@pytest.mark.parametrize("mode", sorted(LAYA_CHAIN_ORDERS))
+def test_a_local_first_chain_with_its_keys_present_answers_locally(mode, monkeypatch):
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    transport, hops = routed_transport()
+    result = jev_client.request_decisions({}, QUESTIONS, "first-key", provider=mode,
+                                          fallback_api_key="second-key", transport=transport)
+    assert result["answers"] == ANSWERS
+    assert [hop["endpoint"] for hop in hops] == [LOCAL_DEFAULT], "a healthy local server is the only hop"
+    assert hops[0]["api_key"] == "", "the local hop carries no key"
+    assert hops[0]["model"] == jev_client.LAYA_MODEL_DEFAULT
+    routing = result["provider_routing"]
+    assert routing["provider"] == "laya"
+    assert routing["fallback_used"] is False
+    assert routing["attempts"] == []
+
+
+def test_a_local_failure_falls_through_and_reports_the_hosted_provider(monkeypatch):
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    transport, hops = routed_transport(local_error="connection refused")
+    result = jev_client.request_decisions({}, QUESTIONS, "type-key", provider="laya_then_typesafe",
+                                          transport=transport)
+    assert [hop["endpoint"] for hop in hops] == [LOCAL_DEFAULT, jev_client.TYPESAFE_ENDPOINT]
+    assert hops[1]["api_key"] == "type-key", "the hosted hop uses the key the mode names"
+    assert result["answers"] == ANSWERS
+    routing = result["provider_routing"]
+    assert routing["provider"] == "typesafe", "the metadata says which provider answered"
+    assert routing["provider_order"] == ["laya", "typesafe"]
+    assert routing["fallback_used"] is True, "the metadata says a fallback happened"
+    assert routing["attempts"] == [{"provider": "laya", "error": f"{LOCAL_DEFAULT} connection refused"}]
+
+
+def test_each_named_hosted_provider_is_tried_in_the_order_the_mode_gives(monkeypatch):
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    transport, hops = routed_transport(local_error="closed")
+    result = jev_client.request_decisions({}, QUESTIONS, "router-key",
+                                          provider="laya_then_openrouter_typesafe",
+                                          fallback_api_key="type-key", transport=transport)
+    assert [hop["endpoint"] for hop in hops] == [LOCAL_DEFAULT, jev_client.ENDPOINT]
+    assert hops[1]["api_key"] == "router-key"
+    assert result["provider_routing"]["provider"] == "openrouter"
+    assert result["provider_routing"]["provider_order"] == ["laya", "openrouter", "typesafe"]
+    assert [attempt["provider"] for attempt in result["provider_routing"]["attempts"]] == ["laya"]
+
+
+def test_a_local_first_chain_still_requires_ordered_score_levels():
+    transport, hops = routed_transport()
+    questions = dict(QUESTIONS, blast_radius={"type": "score", "instructions": "x", "criteria": {"min": 0, "max": 1}})
+    with pytest.raises(jev_client.JevSchemaError, match="list of level descriptions"):
+        jev_client.request_decisions({}, questions, "type-key", provider="laya_then_typesafe", transport=transport)
+    assert hops == [], "an unanswerable local score question must not reach any provider"
+
+
+def test_a_local_first_chain_keeps_the_legend_index_scale():
+    transport, _ = routed_transport(local_answers=dict(ANSWERS, blast_radius={"type": "score", "score": 2.4}))
+    with pytest.raises(jev_client.JevSchemaError, match="outside the 3 level local scale"):
+        jev_client.request_decisions({}, QUESTIONS, "type-key", provider="laya_then_typesafe", transport=transport)
+
+
+@pytest.mark.parametrize("mode", sorted(jev_client.PROVIDER_MODES))
+def test_only_the_modes_that_name_laya_include_it(mode):
+    names_laya = mode == "laya" or mode in jev_client.LAYA_CHAIN_MODES
+    assert ("laya" in jev_client.provider_order(mode)) is names_laya
+
+
+@pytest.mark.parametrize("mode, expected", [
+    ("typesafe", ("typesafe",)),
+    ("openrouter", ("openrouter",)),
+    ("typesafe_then_openrouter", ("typesafe", "openrouter")),
+    ("openrouter_then_typesafe", ("openrouter", "typesafe")),
+    ("laya", ("laya",)),
+])
+def test_the_existing_modes_keep_their_orders(mode, expected):
+    assert jev_client.provider_order(mode) == expected
+
+
+def test_a_hosted_mode_with_an_injected_transport_is_unchanged():
+    """A hosted chain still makes one transport call and adds no routing block."""
+    calls = []
+
+    def transport(payload, **kwargs):
+        calls.append(kwargs)
+        return {"answers": dict(ANSWERS)}
+
+    result = jev_client.request_decisions({}, QUESTIONS, "type-key", provider="typesafe_then_openrouter",
+                                          fallback_api_key="router-key", transport=transport)
+    assert result == {"answers": ANSWERS}
+    assert len(calls) == 1
+    assert "endpoint" not in calls[0], "the hosted path keeps the transport signature it always had"
+    assert "provider_routing" not in result
 
 
 def test_an_unknown_provider_mode_still_fails_closed(monkeypatch):
@@ -333,3 +514,33 @@ def test_live_approval_review_runs_with_no_key(monkeypatch):
     assert result["success"] is True
     assert result["verdict"] in {"APPROVE", "DENY", "ESCALATE"}
     print(f"live local approval review: verdict={result['verdict']} rule={result['applied_rule']} in {elapsed:.2f}s")
+
+
+@pytest.mark.skipif(not LIVE, reason="set JEV_LAYA_LIVE=1 to call a running laya-serve")
+def test_live_local_first_chain_answers_from_the_local_server():
+    """A real `laya_then_*` review, answered locally, over the live server.
+
+    The hosted hop exists only so the mode may fall through. A synthetic key
+    satisfies selection without being a real credential, no hosted request is
+    made, and no hosted request could be made here anyway. This machine holds no
+    hosted API key, so the fallback hop itself is proven by the injected
+    transport tests above, not against a live hosted API.
+    """
+    started = time.monotonic()
+    result = jev_client.request_decisions(
+        {"command": "rm -rf /tmp/jevs-decision-store"}, QUESTIONS, "synth-key",
+        provider="laya_then_typesafe_openrouter", fallback_api_key="synth-key",
+        timeout=jev_client.LAYA_TIMEOUT_S,
+    )
+    elapsed = time.monotonic() - started
+    routing = result["provider_routing"]
+    answers = result["answers"]
+
+    assert routing["provider"] == "laya", "a healthy local server answers first"
+    assert routing["fallback_used"] is False
+    assert routing["provider_order"] == ["laya", "typesafe", "openrouter"]
+    assert routing["attempts"] == []
+    assert answers["verdict"]["choice"] in QUESTIONS["verdict"]["criteria"]
+    assert 0.0 <= answers["blast_radius"]["score"] <= 2.0, "the local score stays a legend index"
+    print(f"live local-first chain: answered by {routing['provider']} in {elapsed:.2f}s, "
+          f"verdict={answers['verdict']['choice']}")
